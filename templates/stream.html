@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% block title %}{{ stream.name }} — StreamCast{% endblock %}
+{% block body %}
+<div class="page-head">
+  <div>
+    <div class="row" style="margin-bottom:8px">
+      <a href="{{ url_for('dashboard') }}" class="muted">← Streams</a>
+    </div>
+    <h1>{{ stream.name }}</h1>
+    <div class="row" style="margin-top:8px">
+      <span id="livePill" class="pill {{ 'pill-live' if status.live else 'pill-off' }}">
+        <span class="pdot"></span><span id="liveText">{{ 'LIVE' if status.live else 'OFFLINE' }}</span>
+      </span>
+      {% if stream.youtube_url %}<a href="{{ stream.youtube_url }}" target="_blank">Watch on YouTube ↗</a>{% endif %}
+    </div>
+  </div>
+  <div class="row">
+    <a href="{{ url_for('stream_edit', stream_id=stream.id) }}" class="btn">Edit</a>
+    {% if status.live %}
+      <form method="post" action="{{ url_for('stream_apply', stream_id=stream.id) }}">
+        <button class="btn" title="Rebuild the broadcast from the current queue right now">↻ Apply queue now</button>
+      </form>
+      <form method="post" action="{{ url_for('stream_stop', stream_id=stream.id) }}">
+        <button class="btn btn-danger">■ Stop</button>
+      </form>
+    {% else %}
+      <form method="post" action="{{ url_for('stream_start', stream_id=stream.id) }}">
+        <button class="btn btn-live">● Go live</button>
+      </form>
+    {% endif %}
+  </div>
+</div>
+
+{% if status.error and not status.live %}
+<div class="flash flash-error">Last error: {{ status.error }}</div>
+{% endif %}
+
+<!-- Upload -->
+<div class="card">
+  <h2>Add videos</h2>
+  <form id="uploadForm" method="post" action="{{ url_for('upload', stream_id=stream.id) }}" enctype="multipart/form-data">
+    <div class="dropzone" id="dropzone">
+      <div>Drag &amp; drop videos here, or <b>click to browse</b></div>
+      <div class="hint" style="margin-top:6px">mp4, mov, mkv, webm — 60fps files are blocked. Files are normalized before streaming.</div>
+      <input type="file" id="fileInput" name="video" accept="video/*" multiple hidden>
+    </div>
+    <div id="selectedInfo" class="hint" style="margin-top:10px"></div>
+    <button type="submit" class="btn btn-primary" style="margin-top:14px" id="uploadBtn" disabled>Upload</button>
+  </form>
+</div>
+
+<!-- Queue -->
+<div class="card">
+  <div class="row" style="margin-bottom:16px">
+    <h2 style="margin:0">Video queue</h2>
+    <span class="spacer"></span>
+    <span id="queueHint" class="muted" style="font-size:13px">Drag to reorder — this is the play order</span>
+  </div>
+  {% if status.live %}
+  <p class="hint" id="liveEditHint" style="margin:-6px 0 16px">
+    Stream is live. Changes to the queue apply automatically at the next block, or hit <b>Apply queue now</b> above to switch immediately.
+  </p>
+  {% endif %}
+  {% if videos %}
+  <ul class="queue" id="queue" data-stream="{{ stream.id }}">
+    {% for v in videos %}
+    <li class="qitem" draggable="true" data-id="{{ v.id }}">
+      <span class="qhandle">⠿</span>
+      <div style="flex:1; min-width:0">
+        <span class="qname" title="{{ v.orig_name }}">{{ v.orig_name }}</span>
+        <div class="nowbar" data-nowbar hidden><div class="nowbar-fill" data-nowfill></div></div>
+      </div>
+      <span class="nowtag" data-nowtag hidden>● ON AIR</span>
+      <span class="qdur" data-dur>{{ '%d:%02d'|format((v.duration or 0)//60, (v.duration or 0)%60) if v.duration else '' }}</span>
+      <span class="status-tag st-{{ v.status }}" data-status title="{{ v.error_msg }}">{{ v.status.replace('_',' ') }}</span>
+      <form method="post" action="{{ url_for('video_delete', video_id=v.id) }}" onsubmit="return confirm('Delete this video?')">
+        <button class="btn btn-sm btn-danger">✕</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="empty" style="padding:32px">No videos yet. Upload some above to build your 24/7 loop.</div>
+  {% endif %}
+</div>
+
+<!-- Schedule -->
+<div class="card">
+  <h2>Scheduled start</h2>
+  <form method="post" action="{{ url_for('stream_schedule', stream_id=stream.id) }}" class="row">
+    <input type="datetime-local" name="scheduled_at" style="max-width:260px">
+    <button class="btn">Schedule</button>
+    {% if stream.scheduled_at %}
+      <span class="muted" style="font-size:13px">Currently scheduled — submit empty to clear</span>
+    {% endif %}
+  </form>
+  <p class="hint" style="margin-top:10px">The stream auto-starts at the chosen time (server clock).</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const streamId = {{ stream.id }};
+
+// --- Upload: dropzone + file picker ---
+const dz = document.getElementById('dropzone');
+const input = document.getElementById('fileInput');
+const info = document.getElementById('selectedInfo');
+const uploadBtn = document.getElementById('uploadBtn');
+
+dz.addEventListener('click', () => input.click());
+['dragover','dragenter'].forEach(e => dz.addEventListener(e, ev => { ev.preventDefault(); dz.classList.add('hover'); }));
+['dragleave','drop'].forEach(e => dz.addEventListener(e, ev => { ev.preventDefault(); dz.classList.remove('hover'); }));
+dz.addEventListener('drop', ev => { input.files = ev.dataTransfer.files; refreshSelected(); });
+input.addEventListener('change', refreshSelected);
+function refreshSelected() {
+  const n = input.files.length;
+  info.textContent = n ? `${n} file(s) selected` : '';
+  uploadBtn.disabled = n === 0;
+}
+
+// --- Drag to reorder queue ---
+const queue = document.getElementById('queue');
+if (queue) {
+  let dragEl = null;
+  queue.querySelectorAll('.qitem').forEach(item => {
+    item.addEventListener('dragstart', () => { dragEl = item; item.classList.add('dragging'); });
+    item.addEventListener('dragend', () => {
+      item.classList.remove('dragging');
+      queue.querySelectorAll('.qitem').forEach(i => i.classList.remove('drag-over'));
+      saveOrder();
+    });
+    item.addEventListener('dragover', e => {
+      e.preventDefault();
+      const after = e.clientY > item.getBoundingClientRect().top + item.offsetHeight / 2;
+      queue.querySelectorAll('.qitem').forEach(i => i.classList.remove('drag-over'));
+      item.classList.add('drag-over');
+      if (after) item.after(dragEl); else item.before(dragEl);
+    });
+  });
+  function saveOrder() {
+    const order = [...queue.querySelectorAll('.qitem')].map(i => +i.dataset.id);
+    fetch('{{ url_for("api_reorder") }}', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ stream_id: streamId, order })
+    });
+  }
+}
+
+// --- Live polling: encode statuses + stream live state ---
+async function poll() {
+  try {
+    const [vs, ss] = await Promise.all([
+      fetch(`/api/video_statuses/${streamId}`).then(r => r.json()),
+      fetch(`/api/stream_status/${streamId}`).then(r => r.json()),
+    ]);
+    vs.forEach(v => {
+      const li = queue && queue.querySelector(`.qitem[data-id="${v.id}"]`);
+      if (!li) return;
+      const tag = li.querySelector('[data-status]');
+      if (tag && !tag.classList.contains(`st-${v.status}`)) {
+        tag.className = `status-tag st-${v.status}`;
+        tag.textContent = v.status.replace('_', ' ');
+        tag.title = v.error || '';
+      }
+      const dur = li.querySelector('[data-dur]');
+      if (dur && v.duration && !dur.textContent) {
+        const m = Math.floor(v.duration / 60), s = Math.floor(v.duration % 60);
+        dur.textContent = `${m}:${String(s).padStart(2,'0')}`;
+      }
+    });
+    const pill = document.getElementById('livePill');
+    const txt = document.getElementById('liveText');
+    if (pill) {
+      pill.className = `pill ${ss.live ? 'pill-live' : 'pill-off'}`;
+      txt.textContent = ss.live ? 'LIVE' : 'OFFLINE';
+    }
+
+    // Now-playing highlight + progress bar
+    if (queue) {
+      const np = ss.now_playing;
+      queue.querySelectorAll('.qitem').forEach(li => {
+        const isNow = np && +li.dataset.id === np.video_id;
+        li.classList.toggle('on-air', !!isNow);
+        const tag = li.querySelector('[data-nowtag]');
+        const bar = li.querySelector('[data-nowbar]');
+        const fill = li.querySelector('[data-nowfill]');
+        if (tag) tag.hidden = !isNow;
+        if (bar) bar.hidden = !isNow;
+        if (isNow && fill && np.duration > 0) {
+          fill.style.width = Math.min(100, (np.offset / np.duration) * 100) + '%';
+        }
+      });
+    }
+  } catch (e) { /* transient */ }
+}
+setInterval(poll, 3000);
+poll();
+</script>
+{% endblock %}

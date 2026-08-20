@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Sign in — StreamCast{% endblock %}
+{% block body %}
+<div class="login-wrap">
+  <div class="login-card">
+    <div class="brand"><span class="dot"></span>StreamCast</div>
+    <p class="subtitle">24/7 streaming control panel</p>
+    <form method="post">
+      <div class="field">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" autofocus autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%; justify-content:center;">Sign in</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

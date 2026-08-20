@@ -1,0 +1,134 @@
+"""Background encoder.
+
+Uploaded files come in every shape (different codecs, resolutions, fps). To play
+them back-to-back in a seamless 24/7 stream we normalize each one to a single
+target format up front. Then the streamer can concat + copy them with no
+real-time transcoding, which keeps CPU low and avoids stutter at cut points.
+
+A single worker thread pulls the oldest 'waiting_encode' video and processes it.
+Status transitions: waiting_encode -> encoding -> completed | error.
+"""
+import json
+import subprocess
+import threading
+import time
+import uuid
+
+import config
+import db
+
+
+def ffprobe_info(path):
+    """Return (duration_seconds, fps) for a media file."""
+    cmd = [
+        config.FFPROBE, "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=avg_frame_rate:format=duration",
+        "-of", "json", str(path),
+    ]
+    out = subprocess.check_output(cmd, text=True)
+    data = json.loads(out)
+    duration = float(data.get("format", {}).get("duration", 0) or 0)
+    fps = 0.0
+    streams = data.get("streams", [])
+    if streams:
+        rate = streams[0].get("avg_frame_rate", "0/0")
+        try:
+            num, den = rate.split("/")
+            fps = float(num) / float(den) if float(den) else 0.0
+        except (ValueError, ZeroDivisionError):
+            fps = 0.0
+    return duration, fps
+
+
+def _encode_one(video):
+    src = config.UPLOAD_DIR / video["stored_name"]
+    if not src.exists():
+        db.update_video(video["id"], status="error", error_msg="Source file missing")
+        return
+
+    # Enforce the 60fps block rule before spending CPU on encoding.
+    try:
+        _, src_fps = ffprobe_info(src)
+    except Exception as e:  # noqa: BLE001
+        db.update_video(video["id"], status="error", error_msg=f"probe failed: {e}")
+        return
+    if src_fps >= config.MAX_FPS:
+        db.update_video(
+            video["id"], status="error",
+            error_msg=f"{src_fps:.0f}fps rejected (max {config.MAX_FPS - 1}fps)",
+        )
+        return
+
+    db.update_video(video["id"], status="encoding", error_msg="")
+    out_name = f"{uuid.uuid4().hex}.mp4"
+    out_path = config.ENCODED_DIR / out_name
+
+    # Scale to fit target box with padding (never distorts), fixed fps + GOP so
+    # every clip is concat-compatible. AAC stereo 48k is YouTube's expectation.
+    vf = (
+        f"scale={config.TARGET_WIDTH}:{config.TARGET_HEIGHT}:"
+        f"force_original_aspect_ratio=decrease,"
+        f"pad={config.TARGET_WIDTH}:{config.TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2,"
+        f"fps={config.TARGET_FPS},format=yuv420p"
+    )
+    gop = config.TARGET_FPS * config.GOP_SECONDS
+    cmd = [
+        config.FFMPEG, "-y", "-i", str(src),
+        "-vf", vf,
+        "-c:v", "libx264", "-preset", "veryfast", "-profile:v", "high",
+        "-b:v", config.VIDEO_BITRATE, "-maxrate", config.VIDEO_BITRATE,
+        "-bufsize", config.VIDEO_BITRATE,
+        "-g", str(gop), "-keyint_min", str(gop), "-sc_threshold", "0",
+        "-c:a", "aac", "-b:a", config.AUDIO_BITRATE, "-ar", "48000", "-ac", "2",
+        "-movflags", "+faststart",
+        str(out_path),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        out_path.unlink(missing_ok=True)
+        tail = (proc.stderr or "")[-500:]
+        db.update_video(video["id"], status="error", error_msg=f"encode failed: {tail}")
+        return
+
+    try:
+        duration, _ = ffprobe_info(out_path)
+    except Exception:  # noqa: BLE001
+        duration = 0
+    db.update_video(
+        video["id"], status="completed", encoded_name=out_name,
+        duration=duration, error_msg="",
+    )
+
+
+class EncoderWorker:
+    """One background thread that drains the encode queue."""
+
+    def __init__(self, poll_interval=2.0):
+        self.poll_interval = poll_interval
+        self._stop = threading.Event()
+        self._thread = None
+
+    def start(self):
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+
+    def _run(self):
+        while not self._stop.is_set():
+            job = db.next_encode_job()
+            if job is None:
+                time.sleep(self.poll_interval)
+                continue
+            try:
+                _encode_one(job)
+            except Exception as e:  # noqa: BLE001
+                db.update_video(job["id"], status="error", error_msg=str(e))
+
+
+worker = EncoderWorker()

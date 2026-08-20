@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}{{ 'New stream' if not stream else 'Edit ' + stream.name }} — StreamCast{% endblock %}
+{% block body %}
+<div class="page-head">
+  <div>
+    <h1>{{ 'New stream' if not stream else 'Edit stream' }}</h1>
+    <p class="subtitle" style="margin:0">{{ 'Set up a new broadcast target' if not stream else stream.name }}</p>
+  </div>
+  <a href="{{ url_for('dashboard') if not stream else url_for('stream_detail', stream_id=stream.id) }}" class="btn">Cancel</a>
+</div>
+
+<div class="card" style="max-width:620px">
+  <form method="post" action="{{ url_for('stream_create') if not stream else url_for('stream_edit', stream_id=stream.id) }}">
+    <div class="field">
+      <label for="name">Stream name</label>
+      <input type="text" id="name" name="name" value="{{ stream.name if stream else '' }}" placeholder="e.g. Lo-fi radio 24/7" required>
+    </div>
+    <div class="field">
+      <label for="rtmp_key">YouTube stream key</label>
+      <input type="text" id="rtmp_key" name="rtmp_key" value="{{ stream.rtmp_key if stream else '' }}" placeholder="xxxx-xxxx-xxxx-xxxx" class="mono">
+      <p class="hint">YouTube Studio → Go Live → Stream. Copy the <b>Stream key</b> (not the URL). Ingest base is set server-side.</p>
+    </div>
+    <div class="field">
+      <label for="youtube_url">YouTube watch URL <span class="muted">(optional)</span></label>
+      <input type="url" id="youtube_url" name="youtube_url" value="{{ stream.youtube_url if stream else '' }}" placeholder="https://youtube.com/watch?v=...">
+      <p class="hint">Just a convenience link back to the live page.</p>
+    </div>
+    {% if stream %}
+    <div class="field checkbox-row">
+      <input type="checkbox" id="loop_queue" name="loop_queue" {{ 'checked' if stream.loop_queue else '' }}>
+      <label for="loop_queue">Loop queue forever (recommended for 24/7)</label>
+    </div>
+    {% endif %}
+    <button type="submit" class="btn btn-primary">{{ 'Create stream' if not stream else 'Save changes' }}</button>
+  </form>
+</div>
+{% endblock %}

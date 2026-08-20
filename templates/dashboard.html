@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Streams — StreamCast{% endblock %}
+{% block body %}
+<div class="page-head">
+  <div>
+    <h1>Your streams</h1>
+    <p class="subtitle" style="margin:0">Manage your 24/7 broadcasts</p>
+  </div>
+  <a href="{{ url_for('stream_create') }}" class="btn btn-primary">+ New stream</a>
+</div>
+
+{% if streams %}
+<div class="grid">
+  {% for s in streams %}
+  <div class="stream-card">
+    <div class="row">
+      {% if s.live %}
+        <span class="pill pill-live"><span class="pdot"></span>LIVE</span>
+      {% else %}
+        <span class="pill pill-off"><span class="pdot"></span>OFFLINE</span>
+      {% endif %}
+      <span class="spacer"></span>
+      {% if s.scheduled_at %}<span class="muted" style="font-size:12px">scheduled</span>{% endif %}
+    </div>
+    <a href="{{ url_for('stream_detail', stream_id=s.id) }}" class="name" style="margin-top:12px">{{ s.name }}</a>
+    <div class="stream-meta">
+      <span>{{ s.video_count }} video{{ '' if s.video_count == 1 else 's' }}</span>
+      {% if s.youtube_url %}<a href="{{ s.youtube_url }}" target="_blank">YouTube ↗</a>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card empty">
+  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="m10 9 5 3-5 3z" fill="currentColor" stroke="none"/></svg>
+  <p>No streams yet. Create your first 24/7 broadcast.</p>
+  <a href="{{ url_for('stream_create') }}" class="btn btn-primary">+ New stream</a>
+</div>
+{% endif %}
+{% endblock %}
