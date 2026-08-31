@@ -1,108 +1,112 @@
+> **Язык:** Русский (текущий) · [English](README.en.md)
+
 # StreamCast
 
-Self-hosted 24/7 streaming panel. Upload a set of videos, arrange them into a
-queue, and StreamCast broadcasts them on an endless loop to YouTube (or any RTMP
-target) — a "live" channel that runs forever without you touching it.
+Self-hosted панель для круглосуточных (24/7) стримов. Загрузи набор видео,
+выстрой их в очередь — и StreamCast бесконечно крутит их в прямой эфир на YouTube
+(или на любой RTMP-приёмник). Получается «живой» канал, который работает вечно и
+без твоего участия.
 
-It's built for a **single owner**: you log in with one password, and every
-stream is yours. No sign-up, no billing, no multi-tenant complexity.
+Софт рассчитан на **одного владельца**: ты входишь по единственному паролю, и все
+стримы — твои. Без регистрации, без биллинга, без мультиарендной возни.
 
-## How it works
+## Как это работает
 
-1. **Upload** videos to a stream. Every file is queued for encoding.
-2. A background worker **normalizes** each clip to one uniform format
-   (1080p, 30fps, 2-second keyframes, AAC audio). This is what makes the 24/7
-   loop seamless — clips are already identical, so playback needs no re-encoding.
-3. **Go live** and one `ffmpeg` process concatenates the normalized clips and
-   pushes them to YouTube with `-stream_loop -1 -c copy`. Low CPU, no stutter.
-4. If `ffmpeg` dies (network blip, YouTube reset), a watchdog **restarts it**
-   automatically so the channel self-heals.
+1. **Загрузка** видео в стрим. Каждый файл встаёт в очередь на кодирование.
+2. Фоновый воркер **нормализует** каждый ролик в единый формат
+   (1080p, 30fps, ключевые кадры каждые 2 секунды, звук AAC). Именно это делает
+   24/7-цикл бесшовным — клипы уже идентичны, и при воспроизведении их не нужно
+   перекодировать.
+3. **Выход в эфир** — один процесс `ffmpeg` склеивает нормализованные клипы и
+   толкает их на YouTube с `-stream_loop -1 -c copy`. Низкая нагрузка на CPU, без рывков.
+4. Если `ffmpeg` падает (сбой сети, сброс со стороны YouTube), watchdog
+   **перезапускает его** автоматически — канал самовосстанавливается.
 
-Uploads at 60fps or higher are rejected on purpose — mixing frame rates breaks
-seamless concatenation.
+Файлы с 60fps и выше отклоняются намеренно — смешение частот кадров ломает
+бесшовную склейку.
 
-## Requirements
+## Требования
 
 - **Python 3.10+**
-- **ffmpeg + ffprobe 5.0+** on your `PATH` (`ffmpeg -version` to check)
-- A YouTube channel with **live streaming enabled**
-  (enable it at <https://youtube.com/features> — takes up to 24h the first time)
+- **ffmpeg + ffprobe 5.0+** в `PATH` (проверка: `ffmpeg -version`)
+- YouTube-канал с **включёнными трансляциями**
+  (включается на <https://youtube.com/features> — в первый раз активация занимает до 24 часов)
 
 ---
 
-## Run on localhost (Windows / macOS / Linux)
+## Запуск на localhost (Windows / macOS / Linux)
 
 ```bash
-# 1. Get the code and enter it
+# 1. Забрать код и зайти в папку
 cd StreamCast
 
-# 2. Create a virtualenv
+# 2. Создать виртуальное окружение
 python -m venv venv
 # Windows:
 venv\Scripts\activate
 # macOS/Linux:
 source venv/bin/activate
 
-# 3. Install dependencies
+# 3. Установить зависимости
 pip install -r requirements.txt
 
-# 4. Set your password (otherwise it defaults to "changeme")
+# 4. Задать пароль (иначе по умолчанию будет "changeme")
 #   Windows PowerShell:  $env:STREAMCAST_PASSWORD="my-secret"
 #   macOS/Linux:         export STREAMCAST_PASSWORD=my-secret
 
-# 5. Run
+# 5. Запустить
 python app.py
 ```
 
-Open <http://127.0.0.1:5000>, log in, and create your first stream.
+Открой <http://127.0.0.1:5000>, войди и создай свой первый стрим.
 
-> The dev server (`python app.py`) is fine for testing locally. For a real
-> always-on deployment, use gunicorn + systemd as below.
-
----
-
-## Get your YouTube stream key
-
-1. Go to **YouTube Studio → Create → Go Live**.
-2. Choose **Stream** (not "Webcam").
-3. Under **Stream settings**, copy the **Stream key**
-   (looks like `abcd-1234-efgh-5678-ijkl`).
-4. Paste *only that key* into StreamCast when creating a stream. The ingest
-   URL (`rtmp://a.rtmp.youtube.com/live2`) is set server-side.
+> Dev-сервер (`python app.py`) годится для локальных тестов. Для настоящего
+> постоянного развёртывания используй gunicorn + systemd (см. ниже).
 
 ---
 
-## Deploy on a VPS (Ubuntu 22.04 / 24.04)
+## Где взять ключ трансляции YouTube
 
-A $5–6/month VPS (DigitalOcean, Hetzner, Vultr) easily handles several 1080p
-streams because there's no real-time transcoding.
+1. Зайди в **YouTube Studio → Создать → Начать трансляцию**.
+2. Выбери **Трансляция** (не «Веб-камера»).
+3. В **настройках трансляции** скопируй **Ключ трансляции**
+   (вид: `abcd-1234-efgh-5678-ijkl`).
+4. Вставь *только этот ключ* в StreamCast при создании стрима. Ingest-URL
+   (`rtmp://a.rtmp.youtube.com/live2`) задаётся на стороне сервера.
 
-### 1. Install system packages
+---
+
+## Развёртывание на VPS (Ubuntu 22.04 / 24.04)
+
+VPS за $5–6/мес (DigitalOcean, Hetzner, Vultr) спокойно тянет несколько
+1080p-стримов, потому что перекодирования в реальном времени нет.
+
+### 1. Установить системные пакеты
 
 ```bash
 sudo apt update
 sudo apt install -y python3-venv ffmpeg nginx git
-ffmpeg -version   # confirm it's installed
+ffmpeg -version   # убедиться, что установлен
 ```
 
-### 2. Get the app and set it up
+### 2. Забрать приложение и настроить
 
 ```bash
 sudo mkdir -p /opt/streamcast
 sudo chown $USER:$USER /opt/streamcast
 cd /opt/streamcast
-# copy your StreamCast files here (git clone / scp / rsync)
+# скопируй сюда файлы StreamCast (git clone / scp / rsync)
 
 python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt
 ```
 
-### 3. Configuration
+### 3. Конфигурация
 
-Create `/opt/streamcast/.env` (see `.env.example`):
+Создай `/opt/streamcast/.env` (см. `.env.example`):
 
 ```bash
-STREAMCAST_PASSWORD=a-strong-password
+STREAMCAST_PASSWORD=надёжный-пароль
 STREAMCAST_SECRET=$(python3 -c "import secrets;print(secrets.token_hex(32))")
 STREAMCAST_STORAGE=/var/lib/streamcast
 ```
@@ -112,9 +116,9 @@ sudo mkdir -p /var/lib/streamcast
 sudo chown $USER:$USER /var/lib/streamcast
 ```
 
-### 4. Run it with systemd (always-on, auto-restart on reboot)
+### 4. Запуск через systemd (постоянно, автоперезапуск при перезагрузке)
 
-Create `/etc/systemd/system/streamcast.service`:
+Создай `/etc/systemd/system/streamcast.service`:
 
 ```ini
 [Unit]
@@ -125,8 +129,8 @@ After=network.target
 User=YOUR_USER
 WorkingDirectory=/opt/streamcast
 EnvironmentFile=/opt/streamcast/.env
-# 2 workers is plenty; the streamer/encoder run as background threads.
-# --timeout 0 so long uploads are never killed mid-transfer.
+# 2 воркера — уже перебор; стример/энкодер работают фоновыми потоками.
+# --timeout 0, чтобы долгие загрузки не обрывались на полпути.
 ExecStart=/opt/streamcast/venv/bin/gunicorn \
     --workers 1 --threads 8 --timeout 0 \
     --bind 127.0.0.1:5000 app:app
@@ -137,35 +141,35 @@ RestartSec=3
 WantedBy=multi-user.target
 ```
 
-> Use **`--workers 1 --threads 8`**, not multiple workers. The streaming and
-> encoding state lives in-process; multiple worker processes would each spawn
-> their own ffmpeg and fight over the same streams. One threaded worker is
-> correct here.
+> Используй **`--workers 1 --threads 8`**, а не несколько воркеров. Состояние
+> стриминга и кодирования живёт внутри процесса; несколько воркер-процессов
+> каждый запустили бы свой ffmpeg и передрались бы за одни и те же стримы. Один
+> многопоточный воркер — правильный вариант.
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now streamcast
-sudo systemctl status streamcast     # check it's running
-journalctl -u streamcast -f          # live logs
+sudo systemctl status streamcast     # проверить, что работает
+journalctl -u streamcast -f          # живые логи
 ```
 
-### 5. Put nginx in front (with big upload limit)
+### 5. Поставить перед ним nginx (с большим лимитом загрузки)
 
-Create `/etc/nginx/sites-available/streamcast`:
+Создай `/etc/nginx/sites-available/streamcast`:
 
 ```nginx
 server {
     listen 80;
     server_name your-domain-or-ip;
 
-    client_max_body_size 8G;   # allow large video uploads
+    client_max_body_size 8G;   # разрешить крупные видео-загрузки
 
     location / {
         proxy_pass http://127.0.0.1:5000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_read_timeout 3600;
-        proxy_request_buffering off;   # stream uploads straight through
+        proxy_request_buffering off;   # прокидывать загрузки напрямую
     }
 }
 ```
@@ -175,7 +179,7 @@ sudo ln -s /etc/nginx/sites-available/streamcast /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-### 6. HTTPS (strongly recommended — you're sending a password)
+### 6. HTTPS (крайне рекомендуется — ты передаёшь пароль)
 
 ```bash
 sudo apt install -y certbot python3-certbot-nginx
@@ -184,37 +188,43 @@ sudo certbot --nginx -d your-domain.com
 
 ---
 
-## Security notes
+## Заметки по безопасности
 
-- StreamCast has **no HTTPS and no rate limiting on its own** — always put it
-  behind nginx with TLS (step 6) before exposing it to the internet. Without
-  TLS, your login password travels in plaintext.
-- The login is a single shared password. Choose a strong one and keep
-  `STREAMCAST_SECRET` random and private (it signs session cookies).
-- Treat stream keys as secrets — anyone with your YouTube stream key can
-  broadcast to your channel.
+- У StreamCast **нет собственного HTTPS и нет ограничения частоты запросов** —
+  всегда ставь его за nginx с TLS (шаг 6), прежде чем открывать в интернет. Без
+  TLS твой пароль входа идёт открытым текстом.
+- Вход — один общий пароль. Выбери надёжный и держи `STREAMCAST_SECRET`
+  случайным и в секрете (им подписываются cookie-сессии).
+- Относись к ключам трансляции как к секретам — любой, у кого есть твой
+  YouTube-ключ, может вещать на твой канал.
 
-## Troubleshooting
+## Устранение неполадок
 
-| Symptom | Fix |
+| Симптом | Что делать |
 |---|---|
-| Video stuck on `waiting_encode` | Check `ffmpeg` is on PATH; look at logs (`journalctl -u streamcast`). |
-| Video shows `error` | Hover the red tag for the ffmpeg message. 60fps files are rejected by design. |
-| Stream won't go live | Needs at least one `completed` video and a stream key set. |
-| Goes live then drops | Check the "Last error" banner; usually a wrong/expired YouTube key. |
-| Upload fails on VPS | Raise `client_max_body_size` in nginx and `STREAMCAST_MAX_UPLOAD_MB`. |
+| Видео зависло на `waiting_encode` | Проверь, что `ffmpeg` в PATH; посмотри логи (`journalctl -u streamcast`). |
+| Видео в статусе `error` | Наведи на красный тег — увидишь сообщение ffmpeg. Файлы 60fps отклоняются намеренно. |
+| Стрим не выходит в эфир | Нужен хотя бы один ролик `completed` и заданный ключ трансляции. |
+| Выходит в эфир и сразу отваливается | Проверь баннер «Last error» — обычно неверный/просроченный ключ YouTube. |
+| Загрузка не проходит на VPS | Подними `client_max_body_size` в nginx и `STREAMCAST_MAX_UPLOAD_MB`. |
 
-## Configuration reference
+## Справочник по конфигурации
 
-All settings are environment variables (see `.env.example`):
+Все настройки — переменные окружения (см. `.env.example`):
 
-| Variable | Default | Meaning |
+| Переменная | По умолчанию | Смысл |
 |---|---|---|
-| `STREAMCAST_PASSWORD` | `changeme` | Login password |
-| `STREAMCAST_SECRET` | dev value | Session cookie signing key |
-| `STREAMCAST_RTMP_BASE` | YouTube live2 | RTMP ingest base URL |
-| `STREAMCAST_STORAGE` | `./storage` | Where uploads, encoded files, and the DB live |
-| `STREAMCAST_WIDTH` / `_HEIGHT` | 1920 / 1080 | Output resolution |
-| `STREAMCAST_FPS` | 30 | Output frame rate |
-| `STREAMCAST_VBITRATE` | 4500k | Video bitrate |
-| `STREAMCAST_MAX_UPLOAD_MB` | 8192 | Max upload size |
+| `STREAMCAST_PASSWORD` | `changeme` | Пароль входа |
+| `STREAMCAST_SECRET` | dev-значение | Ключ подписи cookie-сессий |
+| `STREAMCAST_RTMP_BASE` | YouTube live2 | Базовый RTMP-URL приёма |
+| `STREAMCAST_STORAGE` | `./storage` | Где лежат загрузки, кодированные файлы и БД |
+| `STREAMCAST_WIDTH` / `_HEIGHT` | 1920 / 1080 | Разрешение на выходе |
+| `STREAMCAST_FPS` | 30 | Частота кадров на выходе |
+| `STREAMCAST_VBITRATE` | 4500k | Битрейт видео |
+| `STREAMCAST_MAX_UPLOAD_MB` | 8192 | Максимальный размер загрузки |
+
+---
+
+## Связь
+
+По всем вопросам о софте обращайся к владельцу в Telegram: **<https://t.me/YT_cartell>**
