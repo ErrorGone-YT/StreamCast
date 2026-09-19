@@ -14,16 +14,24 @@
 
 <div style="display:flex; gap:8px; margin:20px 0; flex-wrap:wrap; align-items:center;">
 
-  <button type="button" class="btn filter-btn active" data-filter="all">
-    All
-  </button>
-
   <button type="button" class="btn filter-btn" data-filter="live">
     🟢 Active
   </button>
 
   <button type="button" class="btn filter-btn" data-filter="offline">
     ⚪ Inactive
+  </button>
+
+  <button type="button" class="btn filter-btn" data-filter="music">
+    🎵 Music
+  </button>
+
+  <button type="button" class="btn filter-btn" data-filter="video">
+    🎬 Video
+  </button>
+
+  <button type="button" class="btn filter-btn" id="filterReset" title="Clear filters and search">
+    ✕ Reset
   </button>
 
   <input
@@ -52,7 +60,9 @@
   {% for s in streams %}
   <div class="stream-card stream-item"
        data-status="{{ 'live' if s.live else 'offline' }}"
-       data-name="{{ s.name|lower }}">
+       data-type="{{ s.stream_type }}"
+       data-name="{{ s.name|lower }}"
+       data-all="{{ (s.name ~ ' ' ~ s.stream_type ~ ' ' ~ ('live' if s.live else 'offline') ~ ' ' ~ (s.resolution or '') ~ ' ' ~ s.video_count ~ ' ' ~ ('tracks' if s.stream_type == 'music' else 'videos') ~ ' ' ~ (s.runtime_label or '') ~ ' ' ~ (s.size_label or '') ~ ' ' ~ ('scheduled' if s.scheduled_at else '')) | lower }}">
 
     <div class="row">
       {% if s.live %}
@@ -64,6 +74,7 @@
           <span class="pdot"></span>OFFLINE
         </span>
       {% endif %}
+      {% if s.resolution %}<span class="qres" title="Stream resolution">{{ s.resolution }}</span>{% endif %}
 
       <span class="spacer"></span>
 
@@ -131,7 +142,10 @@
 </div>
 
 <script>
-let currentFilter = 'all';
+// Multi-select filters: a card matches when it fits ANY selected chip
+// (no chips selected = show everything). Search runs over every card
+// parameter and combines with the filters.
+const activeFilters = new Set();
 
 function confirmDelete(name) {
   return confirm(
@@ -150,15 +164,19 @@ function updateStreams() {
 
   document.querySelectorAll('.stream-item').forEach(function(item) {
 
-    const statusMatches =
-      currentFilter === 'all' ||
-      item.dataset.status === currentFilter;
+    const matchesFilter =
+      activeFilters.size === 0 ||
+      [...activeFilters].some(function(f) {
+        return f === 'live' || f === 'offline'
+          ? item.dataset.status === f
+          : item.dataset.type === f;
+      });
 
-    const nameMatches =
+    const matchesSearch =
       !search ||
-      item.dataset.name.includes(search);
+      item.dataset.all.includes(search);
 
-    const show = statusMatches && nameMatches;
+    const show = matchesFilter && matchesSearch;
 
     item.style.display = show ? '' : 'none';
 
@@ -171,25 +189,39 @@ function updateStreams() {
     visible === 0 ? 'block' : 'none';
 }
 
-document.querySelectorAll('.filter-btn').forEach(function(button) {
+document.querySelectorAll('.filter-btn[data-filter]').forEach(function(button) {
 
   button.addEventListener('click', function() {
 
-    document.querySelectorAll('.filter-btn').forEach(function(btn) {
-      btn.classList.remove('active');
-    });
+    const f = this.dataset.filter;
 
-    this.classList.add('active');
-
-    currentFilter = this.dataset.filter;
+    if (activeFilters.has(f)) {
+      activeFilters.delete(f);
+      this.classList.remove('active');
+    } else {
+      activeFilters.add(f);
+      this.classList.add('active');
+    }
 
     updateStreams();
   });
 
 });
 
+document.getElementById('filterReset').addEventListener('click', function() {
+  activeFilters.clear();
+  document.querySelectorAll('.filter-btn.active').forEach(function(btn) {
+    btn.classList.remove('active');
+  });
+  const search = document.getElementById('stream-search');
+  if (search) search.value = '';
+  updateStreams();
+});
+
 document.getElementById('stream-search')
   .addEventListener('input', updateStreams);
+
+updateStreams();
 </script>
 
 <style>

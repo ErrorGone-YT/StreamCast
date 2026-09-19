@@ -68,6 +68,13 @@ def _midcut(name, limit=48, tail=12):
     return name[:head] + "…" + name[-tail:]
 
 
+# Encoding target of the whole app (per-stream selection is not wired up yet).
+def _mode_resolution(mode):
+    """Resolution badge for a quality mode, e.g. 1080p."""
+    preset = config.QUALITY_MODES.get(mode or "balanced", config.QUALITY_MODES["balanced"])
+    return _res_label(preset["width"], preset["height"])
+
+
 def _hydrate_media_meta(v):
     """Backfill size/resolution for files encoded before those columns existed."""
     if v["status"] != "completed" or not v["encoded_name"]:
@@ -147,6 +154,7 @@ def dashboard():
         runtime = max(s["video_duration"], s["audio_duration"])
         s["runtime_label"] = _fmt_runtime(runtime)
         s["size_label"] = _fmt_size(s["total_size"])
+        s["resolution"] = _mode_resolution(s["quality_mode"])
     return render_template("dashboard.html", streams=streams)
 
 
@@ -159,14 +167,18 @@ def stream_create():
         stream_type = request.form.get("stream_type", "video")
         if stream_type not in ("video", "music"):
             stream_type = "video"
+        quality_mode = request.form.get("quality_mode", "balanced")
+        if quality_mode not in config.QUALITY_MODES:
+            quality_mode = "balanced"
         sid = db.create_stream(
             name,
             rtmp_key=request.form.get("rtmp_key", "").strip(),
             youtube_url=request.form.get("youtube_url", "").strip(),
             stream_type=stream_type,
+            quality_mode=quality_mode,
         )
         return redirect(url_for("stream_detail", stream_id=sid))
-    return render_template("stream_edit.html", stream=None)
+    return render_template("stream_edit.html", stream=None, current_mode="balanced")
 
 
 @app.route("/stream/<int:stream_id>")
@@ -188,7 +200,7 @@ def stream_detail(stream_id):
     )
     return render_template(
         "stream.html", stream=stream, videos=videos, status=status,
-        totals_label=totals_label,
+        totals_label=totals_label, resolution=_mode_resolution(stream["quality_mode"]),
     )
 
 
@@ -199,16 +211,32 @@ def stream_edit(stream_id):
     if not stream:
         abort(404)
     if request.method == "POST":
+        quality_mode = request.form.get("quality_mode", stream["quality_mode"] or "balanced")
+        if quality_mode not in config.QUALITY_MODES:
+            quality_mode = stream["quality_mode"] or "balanced"
         db.update_stream(
             stream_id,
             name=request.form.get("name", "").strip() or stream["name"],
             rtmp_key=request.form.get("rtmp_key", "").strip(),
             youtube_url=request.form.get("youtube_url", "").strip(),
             loop_queue=1 if request.form.get("loop_queue") else 0,
+            quality_mode=quality_mode,
         )
-        flash("Saved", "ok")
+        if quality_mode != (stream["quality_mode"] or "balanced"):
+            # Re-encode the queue into the new mode in the background; files
+            # keep playing their previous-quality copies until each is done.
+            for v in db.list_videos(stream_id):
+                if v["status"] == "completed" and (v["encode_preset"] or "balanced") != quality_mode:
+                    db.update_video(v["id"], status="waiting_encode", progress=0.0, error_msg="")
+            manager.apply_now(stream_id)
+            flash("Quality mode changed — the queue is being re-encoded in the background", "ok")
+        else:
+            flash("Saved", "ok")
         return redirect(url_for("stream_detail", stream_id=stream_id))
-    return render_template("stream_edit.html", stream=stream)
+    return render_template(
+        "stream_edit.html", stream=stream,
+        current_mode=stream["quality_mode"] or "balanced",
+    )
 
 
 @app.route("/stream/delete/<int:stream_id>", methods=["POST"])
@@ -379,6 +407,7 @@ def api_stream_status(stream_id):
         "error": runner_status.get("error", ""),
         "now_playing": runner_status.get("now_playing"),
         "shuffle": shuffle,
+        "uptime": runner_status.get("uptime"),
         "totals": {
             "runtime": _fmt_runtime(max(vd, ad)),
             "size": _fmt_size(sz),

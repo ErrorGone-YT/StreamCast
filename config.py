@@ -44,6 +44,36 @@ VIDEO_BITRATE = _env("STREAMCAST_VBITRATE", "4500k")
 AUDIO_BITRATE = _env("STREAMCAST_ABITRATE", "128k")
 GOP_SECONDS = 2  # keyframe interval; YouTube recommends 2s
 
+# Quality modes: per-stream encoding presets. A stream's queue is re-encoded
+# into its mode's parameters (once, in the background); playback itself always
+# stays -c copy, so the mode costs nothing at air time.
+QUALITY_MODES = {
+    "quality": {
+        "label": "Max quality",
+        "x264_preset": "medium",
+        "width": 1920, "height": 1080,
+        "vbitrate": "6000k",
+        "audio_bitrate": "192k",   # AAC audio of video files
+        "mp3_bitrate": "192k",     # normalized audio tracks (music streams)
+    },
+    "balanced": {
+        "label": "Balanced",
+        "x264_preset": "veryfast",
+        "width": TARGET_WIDTH, "height": TARGET_HEIGHT,
+        "vbitrate": VIDEO_BITRATE,
+        "audio_bitrate": AUDIO_BITRATE,
+        "mp3_bitrate": "128k",
+    },
+    "performance": {
+        "label": "Max performance",
+        "x264_preset": "superfast",
+        "width": 1280, "height": 720,
+        "vbitrate": "2500k",
+        "audio_bitrate": "128k",
+        "mp3_bitrate": "128k",
+    },
+}
+
 # Uploads at or above this fps are rejected (matches the "blocks 60fps!" rule).
 MAX_FPS = int(_env("STREAMCAST_MAX_FPS", "60"))
 
@@ -59,6 +89,13 @@ ALLOWED_AUDIO_EXT = {".mp3", ".wav", ".flac", ".ogg", ".oga", ".m4a", ".aac", ".
 # seconds so we don't reconnect to YouTube too often. Lower = faster pickup of
 # queue changes but more frequent reconnects.
 RELOAD_BLOCK_SECONDS = int(_env("STREAMCAST_RELOAD_BLOCK_SECONDS", "900"))
+
+# How long YouTube keeps a broadcast alive without incoming data before it
+# finalizes it and saves it as a video (~1 minute in practice, undocumented).
+# If ffmpeg keeps crashing and the supervisor can't get it back up within this
+# window, the runner gives up (stream goes offline) so YouTube archives the
+# broadcast cleanly instead of splitting it into pieces.
+YOUTUBE_GRACE_SECONDS = int(_env("STREAMCAST_YOUTUBE_GRACE_SECONDS", "60"))
 
 # ffmpeg / ffprobe binaries (override if not on PATH)
 FFMPEG = _env("STREAMCAST_FFMPEG", "ffmpeg")

@@ -358,6 +358,9 @@ input:focus {
 .flash-error { background: #fff0f2; color: #c31832; border: 1px solid #ffc9d2; }
 
 .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+/* Neutralize the UA stylesheet's form margin (1em) that breaks vertical
+   centering when forms and links share a flex row. */
+.row > form { margin: 0; display: flex; align-items: center; }
 .spacer { flex: 1; }
 .muted { color: var(--muted); }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; letter-spacing: -.01em; }

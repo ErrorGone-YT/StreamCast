@@ -47,7 +47,16 @@ def ffprobe_info(path):
     return duration, fps, width, height
 
 
-def _transcode(video, cmd, out_path, total_duration, src_dims=(None, None)):
+def _mode_for(video):
+    """Quality mode of the stream this file belongs to."""
+    stream = db.get_stream(video["stream_id"])
+    mode = None
+    if stream and "quality_mode" in stream.keys():
+        mode = stream["quality_mode"]
+    return mode if mode in config.QUALITY_MODES else "balanced"
+
+
+def _transcode(video, cmd, out_path, total_duration, src_dims=(None, None), mode="balanced"):
     """Run an ffmpeg normalize job, streaming progress into the DB."""
     import re
 
@@ -89,11 +98,28 @@ def _transcode(video, cmd, out_path, total_duration, src_dims=(None, None)):
     except OSError:
         size = None
 
-    db.update_video(
-        video["id"], status="completed", encoded_name=out_path.name,
-        duration=duration, width=src_dims[0], height=src_dims[1],
-        size=size, error_msg="", progress=100.0,
-    )
+    # Keep the previous-quality copy playable while the rest of the queue is
+    # re-encoding into a new mode (see _build_playlist in streamer.py).
+    old_name = video["encoded_name"] if "encoded_name" in video.keys() else None
+    old_preset = (video["encode_preset"] if "encode_preset" in video.keys() else None) or "balanced"
+    updates = {
+        "status": "completed", "encoded_name": out_path.name,
+        "duration": duration, "width": src_dims[0], "height": src_dims[1],
+        "size": size, "encode_preset": mode, "error_msg": "", "progress": 100.0,
+    }
+    if old_name and old_preset != mode:
+        updates["prev_encoded_name"] = old_name
+        updates["prev_encode_preset"] = old_preset
+    else:
+        updates["prev_encoded_name"] = None
+        updates["prev_encode_preset"] = None
+        if old_name and old_name != out_path.name:
+            try:
+                (config.ENCODED_DIR / old_name).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    db.update_video(video["id"], **updates)
 
 
 def _encode_one(video):
@@ -119,39 +145,43 @@ def _encode_one(video):
 
     db.update_video(video["id"], status="encoding", error_msg="", progress=0.0)
 
+    mode = _mode_for(video)
+    preset = config.QUALITY_MODES[mode]
+
     if kind == "audio":
         # Normalize to CBR MP3 so the concat playlist plays tracks seamlessly.
         out_path = config.ENCODED_DIR / f"{uuid.uuid4().hex}.mp3"
         cmd = [
             config.FFMPEG, "-y", "-i", str(src),
             "-vn",
-            "-c:a", "libmp3lame", "-b:a", config.AUDIO_BITRATE,
+            "-c:a", "libmp3lame", "-b:a", preset["mp3_bitrate"],
             "-ar", "44100", "-ac", "2", "-write_xing", "0",
             str(out_path),
         ]
     else:
+        w, h = preset["width"], preset["height"]
         out_path = config.ENCODED_DIR / f"{uuid.uuid4().hex}.mp4"
 
         vf = (
-            f"scale={config.TARGET_WIDTH}:{config.TARGET_HEIGHT}:"
+            f"scale={w}:{h}:"
             f"force_original_aspect_ratio=decrease,"
-            f"pad={config.TARGET_WIDTH}:{config.TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2,"
+            f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,"
             f"fps={config.TARGET_FPS},format=yuv420p"
         )
         gop = config.TARGET_FPS * config.GOP_SECONDS
         cmd = [
             config.FFMPEG, "-y", "-i", str(src),
             "-vf", vf,
-            "-c:v", "libx264", "-preset", "veryfast", "-profile:v", "high",
-            "-b:v", config.VIDEO_BITRATE, "-maxrate", config.VIDEO_BITRATE,
-            "-bufsize", config.VIDEO_BITRATE,
+            "-c:v", "libx264", "-preset", preset["x264_preset"], "-profile:v", "high",
+            "-b:v", preset["vbitrate"], "-maxrate", preset["vbitrate"],
+            "-bufsize", preset["vbitrate"],
             "-g", str(gop), "-keyint_min", str(gop), "-sc_threshold", "0",
-            "-c:a", "aac", "-b:a", config.AUDIO_BITRATE, "-ar", "48000", "-ac", "2",
+            "-c:a", "aac", "-b:a", preset["audio_bitrate"], "-ar", "48000", "-ac", "2",
             "-movflags", "+faststart",
             str(out_path),
         ]
 
-    _transcode(video, cmd, out_path, src_duration, src_dims=(src_w, src_h))
+    _transcode(video, cmd, out_path, src_duration, src_dims=(src_w, src_h), mode=mode)
 
 
 class EncoderWorker:

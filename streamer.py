@@ -55,6 +55,11 @@ class _Runner:
         self._thread = None
         self.last_error = ""
 
+        # Live-session uptime (wall clock). Set once per runner start; block
+        # rebuilds and watchdog restarts don't reset it. Reset on next start.
+        self.session_started = None
+        self.session_stopped = None
+
         # now-playing tracking (computed from wall-clock, since -re plays realtime)
         self._block_started = 0.0          # monotonic time the current block began
         self._block_videos = []            # {id, duration} in actual play order
@@ -79,6 +84,10 @@ class _Runner:
         audio tracks; the visual is one looped video (self.loop_video_path).
         Sets self.last_error and returns (None, [], 0.0) when nothing is
         ready to play.
+
+        While a quality-mode switch re-encodes the queue, the playlist is
+        built from the previous-quality copies (kept in prev_* columns) so
+        the broadcast never mixes parameters mid-stream.
         """
         stream = db.get_stream(self.stream_id)
         stream_type = stream["stream_type"] if stream and "stream_type" in stream.keys() else "video"
@@ -86,21 +95,44 @@ class _Runner:
         is_shuffle = bool(stream["shuffle"]) if stream else False
         loop = bool(stream["loop_queue"]) if stream else False
 
+        videos_all = db.list_videos(self.stream_id)
+        # Pending = an existing copy is being re-encoded for a mode switch.
+        pending = any(
+            v["status"] == "waiting_encode" and v["encoded_name"]
+            for v in videos_all
+        )
+        if not pending:
+            # Transition finished (or never started): drop previous copies.
+            for v in videos_all:
+                if v["prev_encoded_name"]:
+                    try:
+                        (config.ENCODED_DIR / v["prev_encoded_name"]).unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    db.update_video(v["id"], prev_encoded_name=None, prev_encode_preset=None)
+            videos_all = db.list_videos(self.stream_id)
+
+        def copy_name(v):
+            """The copy this row should play right now."""
+            if pending and v["status"] == "completed":
+                return v["prev_encoded_name"]  # keep the whole block uniform
+            return v["encoded_name"]
+
         if is_music:
-            videos_base = db.list_ready_videos(self.stream_id, kind="audio")
+            videos_base = [v for v in videos_all if v["kind"] == "audio" and copy_name(v)]
             if not videos_base:
                 self.last_error = "No ready audio files in queue"
                 return None, [], 0.0
             loop_video = None
             loop_id = stream["loop_video_id"] if stream and "loop_video_id" in stream.keys() else None
             if loop_id:
-                lv = db.get_video(loop_id)
-                if lv and lv["status"] == "completed" and lv["encoded_name"]:
+                lv = next((v for v in videos_all if v["id"] == loop_id and copy_name(v)), None)
+                if lv:
                     loop_video = lv
             if loop_video is None:
                 self.last_error = "No loop video selected — upload a video and set it as the background"
                 return None, [], 0.0
-            self.loop_video_path = (config.ENCODED_DIR / loop_video["encoded_name"]).resolve()
+            self.loop_video_path = (config.ENCODED_DIR / copy_name(loop_video)).resolve()
             self._mix_video_audio = bool(
                 stream["mix_video_audio"] if "mix_video_audio" in stream.keys() else False
             )
@@ -117,7 +149,7 @@ class _Runner:
                 # Background has no sound to mix — fall back to playlist-only audio.
                 self._mix_video_audio = False
         else:
-            videos_base = db.list_ready_videos(self.stream_id)
+            videos_base = [v for v in videos_all if v["kind"] != "audio" and copy_name(v)]
             if not videos_base:
                 self.last_error = "No ready videos in queue"
                 return None, [], 0.0
@@ -128,6 +160,7 @@ class _Runner:
                 stream["stream_volume"] if "stream_volume" in stream.keys() and
                 stream["stream_volume"] is not None else 1.0
             )))
+            self._video_volume = 0.5
 
         one_pass = sum((v["duration"] or 0) for v in videos_base)
         repeats = 1
@@ -251,6 +284,8 @@ class _Runner:
         self.playlist_path, self._block_videos, self._block_total = pl, play_order, block_total
         self._stop.clear()
         self._reload.clear()
+        self.session_started = time.time()
+        self.session_stopped = None
         self._thread = threading.Thread(target=self._supervise, daemon=True)
         self._thread.start()
         return True
@@ -266,6 +301,8 @@ class _Runner:
     def _supervise(self):
         """Play the queue block by block, rebuilding between blocks."""
         backoff = 2
+        first_failure = None   # start of the current crash streak (grace window)
+        spawned_at = None
         while not self._stop.is_set():
             stream = db.get_stream(self.stream_id)
             if not stream:
@@ -282,6 +319,7 @@ class _Runner:
                 self.playlist_path, self._block_videos, self._block_total = pl, play_order, block_total
 
             self._spawn(stream)
+            spawned_at = time.time()
 
             # Wait for ffmpeg to finish this block, but wake early on reload.
             killed_by_us = False
@@ -309,6 +347,7 @@ class _Runner:
 
             if block_was_reload:
                 backoff = 2
+                first_failure = None  # clean block switch — healthy again
                 continue  # user changed the queue -> straight into a fresh block
 
             # ffmpeg exited on its own. A clean exit (rc 0) is a normal block/loop
@@ -316,9 +355,20 @@ class _Runner:
             if not killed_by_us and rc not in (0, None):
                 err = self.proc.stderr.read() if self.proc.stderr else ""
                 self.last_error = (err or "").strip()[-300:]
+                now = time.time()
+                if first_failure is None or now - spawned_at >= config.YOUTUBE_GRACE_SECONDS:
+                    # It ran healthy since the last spawn — start a new streak.
+                    first_failure = now
+                if now - first_failure + backoff >= config.YOUTUBE_GRACE_SECONDS:
+                    # YouTube has finalized (or is about to finalize) the broadcast;
+                    # keep retrying and we'd only split it into multiple videos.
+                    self.last_error = ("Stream kept failing — YouTube grace window "
+                                       "exceeded; stopped. Restart when ready.")
+                    break
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 30)
             else:
+                first_failure = None
                 self.last_error = ""
                 backoff = 2
                 # Looping disabled + queue finished cleanly -> end the broadcast.
@@ -327,6 +377,8 @@ class _Runner:
                     break
 
         self._cleanup_playlist()
+        if self.session_started:
+            self.session_stopped = time.time()
         db.set_live(self.stream_id, False, pid=None)
 
     def apply_now(self):
@@ -419,15 +471,20 @@ class StreamManager:
     def status(self, stream_id):
         runner = self._runners.get(stream_id)
         if runner and runner.is_running():
+            uptime = None
+            if runner.session_started:
+                uptime = round(time.time() - runner.session_started, 1)
             return {
                 "live": True,
                 "error": runner.last_error,
                 "now_playing": runner.now_playing(),
+                "uptime": uptime,
             }
         return {
             "live": False,
             "error": runner.last_error if runner else "",
             "now_playing": None,
+            "uptime": None,
         }
 
     # -- scheduler -----------------------------------------------------------

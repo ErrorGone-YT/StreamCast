@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS streams (
     mix_video_audio INTEGER DEFAULT 0,    -- music: mix the background video's own sound
     video_volume  REAL DEFAULT 0.5,       -- music: background video sound level (0..2)
     music_volume  REAL DEFAULT 1.0,       -- music: playlist audio level (0..2)
-    stream_volume REAL DEFAULT 1.0        -- video: playback audio level (0..2)
+    stream_volume REAL DEFAULT 1.0,       -- video: playback audio level (0..2)
+    quality_mode  TEXT DEFAULT 'balanced' -- 'quality' | 'balanced' | 'performance'
 );
 
 CREATE TABLE IF NOT EXISTS videos (
@@ -46,6 +47,9 @@ CREATE TABLE IF NOT EXISTS videos (
     width         INTEGER,                -- source resolution (px), for the UI
     height        INTEGER,
     size          REAL,                   -- encoded file size (bytes)
+    encode_preset TEXT DEFAULT 'balanced', -- quality mode this copy was made with
+    prev_encoded_name TEXT,               -- previous-quality copy kept while re-encoding
+    prev_encode_preset TEXT,
     created_at    REAL NOT NULL,
     FOREIGN KEY (stream_id) REFERENCES streams(id) ON DELETE CASCADE
 );
@@ -107,6 +111,22 @@ def migrate_db():
         except sqlite3.OperationalError:
             pass
         try:
+            db.execute("ALTER TABLE streams ADD COLUMN quality_mode TEXT DEFAULT 'balanced'")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            db.execute("ALTER TABLE videos ADD COLUMN encode_preset TEXT DEFAULT 'balanced'")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            db.execute("ALTER TABLE videos ADD COLUMN prev_encoded_name TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            db.execute("ALTER TABLE videos ADD COLUMN prev_encode_preset TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
             db.execute("ALTER TABLE videos ADD COLUMN kind TEXT DEFAULT 'video'")
         except sqlite3.OperationalError:
             pass
@@ -130,12 +150,12 @@ def init_db():
         migrate_db()
 
 # --- Streams ----------------------------------------------------------------
-def create_stream(name, rtmp_key="", youtube_url="", stream_type="video"):
+def create_stream(name, rtmp_key="", youtube_url="", stream_type="video", quality_mode="balanced"):
     with get_db() as db:
         cur = db.execute(
-            "INSERT INTO streams (name, rtmp_key, youtube_url, stream_type, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (name, rtmp_key, youtube_url, stream_type, time.time()),
+            "INSERT INTO streams (name, rtmp_key, youtube_url, stream_type, quality_mode, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (name, rtmp_key, youtube_url, stream_type, quality_mode, time.time()),
         )
         return cur.lastrowid
 
