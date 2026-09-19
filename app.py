@@ -110,6 +110,17 @@ app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
 
 
+def _fmt_hms(seconds):
+    """HH:MM:SS uptime label, same format as the stream page timer."""
+    sec = max(0, int(seconds or 0))
+    h, rem = divmod(sec, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+app.jinja_env.filters["hms"] = _fmt_hms
+
+
 # --- Auth -------------------------------------------------------------------
 def login_required(view):
     @wraps(view)
@@ -155,6 +166,7 @@ def dashboard():
         s["runtime_label"] = _fmt_runtime(runtime)
         s["size_label"] = _fmt_size(s["total_size"])
         s["resolution"] = _mode_resolution(s["quality_mode"])
+        s["uptime"] = manager.uptime(s["id"]) if s["live"] else None
     return render_template("dashboard.html", streams=streams)
 
 
@@ -251,20 +263,36 @@ def stream_delete(stream_id):
 
 
 # --- Start / stop / schedule ------------------------------------------------
+def _post_action_redirect(stream_id):
+    # Tile buttons on the dashboard pass next=dashboard to stay there;
+    # every other caller lands back on the stream page.
+    if request.args.get("next") == "dashboard":
+        return redirect(url_for("dashboard"))
+    return redirect(url_for("stream_detail", stream_id=stream_id))
+
+
+def _post_action_result(stream_id, ok, msg):
+    # Tile switches fetch this with X-Requested-With and read JSON, so a
+    # failed start (e.g. unconfigured stream) can be reported in place
+    # instead of the switch blindly flipping on a redirect response.
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return jsonify({"ok": ok, "message": msg})
+    flash(msg, "ok" if ok else "error")
+    return _post_action_redirect(stream_id)
+
+
 @app.route("/stream/start/<int:stream_id>", methods=["POST"])
 @login_required
 def stream_start(stream_id):
     ok, msg = manager.start_stream(stream_id)
-    flash(msg, "ok" if ok else "error")
-    return redirect(url_for("stream_detail", stream_id=stream_id))
+    return _post_action_result(stream_id, ok, msg)
 
 
 @app.route("/stream/stop/<int:stream_id>", methods=["POST"])
 @login_required
 def stream_stop(stream_id):
     ok, msg = manager.stop_stream(stream_id)
-    flash(msg, "ok" if ok else "error")
-    return redirect(url_for("stream_detail", stream_id=stream_id))
+    return _post_action_result(stream_id, ok, msg)
 
 
 @app.route("/stream/apply/<int:stream_id>", methods=["POST"])

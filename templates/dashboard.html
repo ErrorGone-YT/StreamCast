@@ -15,11 +15,11 @@
 <div style="display:flex; gap:8px; margin:20px 0; flex-wrap:wrap; align-items:center;">
 
   <button type="button" class="btn filter-btn" data-filter="live">
-    🟢 Active
+    🟢 Live
   </button>
 
   <button type="button" class="btn filter-btn" data-filter="offline">
-    ⚪ Inactive
+    ⚪ Offline
   </button>
 
   <button type="button" class="btn filter-btn" data-filter="music">
@@ -65,22 +65,31 @@
        data-all="{{ (s.name ~ ' ' ~ s.stream_type ~ ' ' ~ ('live' if s.live else 'offline') ~ ' ' ~ (s.resolution or '') ~ ' ' ~ s.video_count ~ ' ' ~ ('tracks' if s.stream_type == 'music' else 'videos') ~ ' ' ~ (s.runtime_label or '') ~ ' ' ~ (s.size_label or '') ~ ' ' ~ ('scheduled' if s.scheduled_at else '')) | lower }}">
 
     <div class="row">
-      {% if s.live %}
-        <span class="pill pill-live">
-          <span class="pdot"></span>LIVE
-        </span>
-      {% else %}
-        <span class="pill pill-off">
-          <span class="pdot"></span>OFFLINE
-        </span>
-      {% endif %}
-      {% if s.resolution %}<span class="qres" title="Stream resolution">{{ s.resolution }}</span>{% endif %}
+      <span class="pill {{ 'pill-live' if s.live else 'pill-off' }}">
+        <span class="pdot"></span>{{ 'LIVE' if s.live else 'OFFLINE' }}
+      </span>
+      <span class="tile-timer muted" data-uptime="{{ s.uptime or 0 }}"
+            title="Session uptime"
+            style="font-size:12.5px; font-variant-numeric:tabular-nums;"
+            {% if not (s.live and s.uptime) %}hidden{% endif %}>{{ (s.uptime or 0)|hms }}</span>
+      {% if s.resolution %}<span class="qres {{ 'qres-max' if s.quality_mode == 'quality' }}" title="{{ 'Max quality mode' if s.quality_mode == 'quality' else 'Stream resolution' }}">{% if s.quality_mode == 'quality' %}✦ {% endif %}{{ s.resolution }}</span>{% endif %}
 
       <span class="spacer"></span>
 
       {% if s.scheduled_at %}
         <span class="muted" style="font-size:12px">scheduled</span>
       {% endif %}
+
+      <!-- iOS-style live switch: right = on air, left = offline -->
+      <form method="POST"
+            action="{{ url_for('stream_stop' if s.live else 'stream_start', stream_id=s.id, next='dashboard') }}"
+            style="margin:0; display:flex;">
+        <button type="submit"
+                class="live-switch {{ 'on' if s.live }}"
+                role="switch"
+                aria-checked="{{ 'true' if s.live else 'false' }}"
+                title="{{ 'Stop streaming' if s.live else 'Go live' }}"></button>
+      </form>
     </div>
 
     <a href="{{ url_for('stream_detail', stream_id=s.id) }}"
@@ -146,6 +155,102 @@
 // (no chips selected = show everything). Search runs over every card
 // parameter and combines with the filters.
 const activeFilters = new Set();
+
+// Live uptime timers on the tiles: seeded server-side from the runner's
+// session start, ticked client-side every second (HH:MM:SS, same as the
+// timer on the stream page).
+function fmtHMS(total) {
+  total = Math.max(0, Math.floor(total));
+  const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+const tileTimers = [...document.querySelectorAll('.tile-timer')].map(el => {
+  const uptime = parseFloat(el.dataset.uptime);
+  return { el, started: Date.now() / 1000 - uptime };
+});
+
+setInterval(() => {
+  const now = Date.now() / 1000;
+  tileTimers.forEach(t => {
+    t.el.textContent = fmtHMS(now - t.started);
+  });
+}, 1000);
+
+// Live switch: POST via fetch, then update the tile in place (pill, timer,
+// filter/search index) so nothing waits for a reload or for the runner
+// thread to publish its session start time.
+function replaceLast(str, from, to) {
+  const i = str.lastIndexOf(from);
+  return i === -1 ? str : str.slice(0, i) + to + str.slice(i + from.length);
+}
+
+// Compact corner toasts for switch actions (fetch results don't go through
+// the server-side flash machinery). Click a toast to dismiss it early.
+function showFlash(message, kind) {
+  let stack = document.querySelector('.toast-stack');
+  if (!stack) {
+    stack = document.createElement('div');
+    stack.className = 'toast-stack';
+    document.body.appendChild(stack);
+  }
+  const toast = document.createElement('div');
+  toast.className = 'toast toast-' + kind;
+  toast.textContent = message;
+  toast.onclick = () => toast.remove();
+  stack.appendChild(toast);
+  setTimeout(() => toast.remove(), kind === 'error' ? 6000 : 3500);
+}
+
+document.querySelectorAll('.live-switch').forEach(sw => {
+  sw.closest('form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const card = sw.closest('.stream-card');
+    const timer = card.querySelector('.tile-timer');
+    const pill = card.querySelector('.pill');
+    const turningOn = !sw.classList.contains('on');
+
+    sw.disabled = true;
+    let data = null;
+    try {
+      const resp = await fetch(form.action, {
+        method: 'POST',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      });
+      if (resp.ok) data = await resp.json();
+    } catch (err) {}
+    sw.disabled = false;
+    if (!data || !data.ok) {
+      showFlash((data && data.message) || 'Something went wrong', 'error');
+      return;  // switch stays as-is; a manual refresh shows the real state
+    }
+    showFlash(data.message, 'ok');
+
+    sw.classList.toggle('on', turningOn);
+    sw.setAttribute('aria-checked', turningOn ? 'true' : 'false');
+    sw.title = turningOn ? 'Stop streaming' : 'Go live';
+
+    if (pill) {
+      pill.className = 'pill ' + (turningOn ? 'pill-live' : 'pill-off');
+      pill.innerHTML = '<span class="pdot"></span>' + (turningOn ? 'LIVE' : 'OFFLINE');
+    }
+    card.dataset.status = turningOn ? 'live' : 'offline';
+    card.dataset.all = turningOn
+      ? replaceLast(card.dataset.all, 'offline', 'live')
+      : replaceLast(card.dataset.all, 'live', 'offline');
+
+    if (turningOn) {
+      timer.hidden = false;
+      timer.dataset.uptime = '0';
+      const t = tileTimers.find(t => t.el === timer);
+      if (t) t.started = Date.now() / 1000;
+      else tileTimers.push({ el: timer, started: Date.now() / 1000 });
+    } else {
+      timer.hidden = true;
+    }
+  });
+});
 
 function confirmDelete(name) {
   return confirm(

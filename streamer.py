@@ -468,6 +468,13 @@ class StreamManager:
         runner = self._runners.get(stream_id)
         return bool(runner and runner.is_running())
 
+    def uptime(self, stream_id):
+        """Seconds since the current session started, or None when offline."""
+        runner = self._runners.get(stream_id)
+        if runner and runner.is_running() and runner.session_started:
+            return round(time.time() - runner.session_started, 1)
+        return None
+
     def status(self, stream_id):
         runner = self._runners.get(stream_id)
         if runner and runner.is_running():
