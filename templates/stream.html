@@ -54,6 +54,12 @@
         <div id="uploadBar" style="background:var(--primary, #007bff); width:0%; height:100%; transition: width 0.2s;"></div>
       </div>
     </div>
+    
+    <div id="uploadList" style="margin-top:15px; display:none;">
+      <div style="font-size:13px; font-weight:bold; margin-bottom:8px; color:var(--text-muted, #666);">Uploading files:</div>
+      <div id="uploadItems" style="display:flex; flex-direction:column; gap:8px;"></div>
+    </div>
+
     <button type="submit" class="btn btn-primary" style="margin-top:14px" id="uploadBtn" disabled>Upload</button>
   </form>
 </div>
@@ -112,79 +118,100 @@
 <script>
 const streamId = {{ stream.id }};
 
+
 // --- Upload: dropzone + file picker ---
 const dz = document.getElementById('dropzone');
 const input = document.getElementById('fileInput');
 const info = document.getElementById('selectedInfo');
 const uploadBtn = document.getElementById('uploadBtn');
+const uploadForm = document.getElementById('uploadForm');
+const uploadList = document.getElementById('uploadList');
+const uploadItems = document.getElementById('uploadItems');
 
-dz.addEventListener('click', () => input.click());
-['dragover','dragenter'].forEach(e => dz.addEventListener(e, ev => { ev.preventDefault(); dz.classList.add('hover'); }));
-['dragleave','drop'].forEach(e => dz.addEventListener(e, ev => { ev.preventDefault(); dz.classList.remove('hover'); }));
-dz.addEventListener('drop', ev => { input.files = ev.dataTransfer.files; refreshSelected(); });
-input.addEventListener('change', refreshSelected);
-function refreshSelected() {
-  const n = input.files.length;
-  info.textContent = n ? `${n} file(s) selected` : '';
-  uploadBtn.disabled = n === 0;
+if (dz && input) {
+  dz.onclick = () => input.click();
+  ['dragover','dragenter'].forEach(e => dz.addEventListener(e, ev => { ev.preventDefault(); dz.classList.add('hover'); }));
+  ['dragleave','drop'].forEach(e => dz.addEventListener(e, ev => { ev.preventDefault(); dz.classList.remove('hover'); }));
+  dz.ondrop = (ev) => { 
+    ev.preventDefault(); 
+    dz.classList.remove('hover');
+    // Create a temporary array since we can't modify input.files
+    window.pendingUploadFiles = Array.from(ev.dataTransfer.files);
+    info.textContent = `${window.pendingUploadFiles.length} file(s) selected`;
+    uploadBtn.disabled = window.pendingUploadFiles.length === 0;
+  };
+  input.onchange = () => {
+    window.pendingUploadFiles = Array.from(input.files);
+    info.textContent = window.pendingUploadFiles.length ? `${window.pendingUploadFiles.length} file(s) selected` : '';
+    uploadBtn.disabled = window.pendingUploadFiles.length === 0;
+  };
 }
 
+if (uploadForm) {
+  uploadForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const files = window.pendingUploadFiles || Array.from(input.files);
+    if (files.length === 0) return;
 
-// --- Upload: AJAX with progress ---
-const uploadForm = document.getElementById('uploadForm');
-const uploadProgress = document.getElementById('uploadProgress');
-const uploadBar = document.getElementById('uploadBar');
-const uploadPercent = document.getElementById('uploadPercent');
-const uploadStatus = document.getElementById('uploadStatus');
+    uploadBtn.disabled = true;
+    uploadBtn.textContent = 'Uploading...';
+    
+    uploadList.style.display = 'block';
+    uploadItems.innerHTML = '';
 
-uploadForm.onsubmit = async (e) => {
-  e.preventDefault();
-  const files = input.files;
-  if (!files.length) return;
+    const uploadPromises = files.map(async (file, index) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex; align-items:center; gap:10px; font-size:13px; padding:8px; background:#f9f9f9; border-radius:4px; border:1px solid #eee;';
+      row.innerHTML = `
+        <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${file.name}</span>
+        <div style="flex:1; height:4px; background:#ddd; border-radius:2px; overflow:hidden;">
+          <div class="u-fill" style="height:100%; background:var(--primary, #007bff); width:0%; transition:width 0.2s;"></div>
+        </div>
+        <span class="u-percent" style="width:30px; text-align:right; font-size:11px;">0%</span>
+      `;
+      uploadItems.appendChild(row);
 
-  uploadBtn.disabled = true;
-  uploadProgress.style.display = 'block';
-  
-  const formData = new FormData();
-  for (const f of files) {
-    formData.append('video', f);
-  }
+      const pFill = row.querySelector('.u-fill');
+      const pText = row.querySelector('.u-percent');
 
-  const xhr = new XMLHttpRequest();
-  xhr.open('POST', uploadForm.action);
-  
-  xhr.upload.onprogress = (e) => {
-    if (e.lengthComputable) {
-      const p = Math.round((e.loaded / e.total) * 100);
-      uploadBar.style.width = p + '%';
-      uploadPercent.textContent = p + '%';
-    }
-  };
+      const formData = new FormData();
+      formData.append('video', file);
 
-  xhr.onload = () => {
-    if (xhr.status === 200) {
-      uploadStatus.textContent = 'Upload complete!';
-      uploadBar.style.background = '#28a745';
-      setTimeout(() => {
-        window.location.reload();
-      }, 1000);
-    } else {
-      uploadStatus.textContent = 'Upload failed';
-      uploadBar.style.background = '#dc3545';
-      uploadBtn.disabled = false;
-    }
-  };
+      return new Promise((resolve) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', uploadForm.action);
+        xhr.upload.onprogress = (ev) => {
+          if (ev.lengthComputable) {
+            const p = Math.round((ev.loaded / ev.total) * 100);
+            pFill.style.width = p + '%';
+            pText.textContent = p + '%';
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status === 200) {
+            row.style.opacity = '0.5';
+            pText.textContent = 'OK';
+          } else {
+            row.style.color = 'red';
+            pText.textContent = 'Err';
+          }
+          resolve();
+        };
+        xhr.onerror = () => {
+          row.style.color = 'red';
+          pText.textContent = 'Err';
+          resolve();
+        };
+        xhr.send(formData);
+      });
+    });
 
-  xhr.onerror = () => {
-    uploadStatus.textContent = 'Network error';
-    uploadBar.style.background = '#dc3545';
+    await Promise.all(uploadPromises);
     uploadBtn.disabled = false;
+    uploadBtn.textContent = 'Upload';
+    setTimeout(() => window.location.reload(), 1000);
   };
-
-  xhr.send(formData);
-};
-
-
+}
 // --- Drag to reorder queue ---
 const queue = document.getElementById('queue');
 if (queue) {

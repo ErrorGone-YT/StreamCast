@@ -192,7 +192,7 @@ def upload(stream_id):
             continue
         stored = f"{uuid.uuid4().hex}{ext}"
         f.save(config.UPLOAD_DIR / stored)
-        db.add_video(stream_id, secure_filename(f.filename), stored)
+        db.add_video(stream_id, f.filename, stored)
         added += 1
     if added:
         flash(f"{added} video(s) queued for encoding", "ok")
