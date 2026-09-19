@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS videos (
     status        TEXT DEFAULT 'waiting_encode',  -- waiting_encode|encoding|completed|error
     error_msg     TEXT DEFAULT '',
     duration      REAL DEFAULT 0,
+    progress      REAL DEFAULT 0,
+    encode_pid    INTEGER,
     position      INTEGER DEFAULT 0,      -- play order within the stream
     created_at    REAL NOT NULL,
     FOREIGN KEY (stream_id) REFERENCES streams(id) ON DELETE CASCADE
@@ -57,10 +59,32 @@ def get_db():
         conn.close()
 
 
+
+def migrate_db():
+    """Ensures all necessary columns exist in the database."""
+    with get_db() as db:
+        # Add progress column
+        try:
+            db.execute("ALTER TABLE videos ADD COLUMN progress REAL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+        # Add encode_pid column
+        try:
+            db.execute("ALTER TABLE videos ADD COLUMN encode_pid INTEGER")
+        except sqlite3.OperationalError:
+            pass
+
+
 def init_db():
     config.ensure_dirs()
     with get_db() as db:
         db.executescript(SCHEMA)
+        migrate_db()
+        try:
+            db.execute("ALTER TABLE videos ADD COLUMN progress REAL DEFAULT 0")
+            db.execute("ALTER TABLE videos ADD COLUMN encode_pid INTEGER")
+        except sqlite3.OperationalError:
+            pass
 
 
 # --- Streams ----------------------------------------------------------------

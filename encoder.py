@@ -60,12 +60,10 @@ def _encode_one(video):
         )
         return
 
-    db.update_video(video["id"], status="encoding", error_msg="")
+    db.update_video(video["id"], status="encoding", error_msg="", progress=0.0)
     out_name = f"{uuid.uuid4().hex}.mp4"
     out_path = config.ENCODED_DIR / out_name
 
-    # Scale to fit target box with padding (never distorts), fixed fps + GOP so
-    # every clip is concat-compatible. AAC stereo 48k is YouTube's expectation.
     vf = (
         f"scale={config.TARGET_WIDTH}:{config.TARGET_HEIGHT}:"
         f"force_original_aspect_ratio=decrease,"
@@ -84,20 +82,58 @@ def _encode_one(video):
         "-movflags", "+faststart",
         str(out_path),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+
+    # We use Popen to read stderr in real-time
+    import re
+    import subprocess
+
+    proc = subprocess.Popen(cmd, stderr=subprocess.PIPE, text=True, bufsize=1)
+    db.update_video(video["id"], encode_pid=proc.pid)
+    
+    # Regex for 'time=00:00:00.00'
+    time_pattern = re.compile(r"time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})")
+    
+    # To calculate %, we need the total duration of the source file
+    try:
+        total_duration = video["duration"] or 0
+    except (KeyError, TypeError):
+        total_duration = 0
+    # If we don't have duration in the object, get it from ffprobe (already have src_fps, but not duration)
+    if total_duration == 0:
+        total_duration, _ = ffprobe_info(src)
+
+    try:
+        while True:
+            line = proc.stderr.readline()
+            if not line:
+                break
+            
+            match = time_pattern.search(line)
+            if match:
+                h, m, s, ms = map(int, match.groups())
+                current_time = h * 3600 + m * 60 + s + ms / 100
+                if total_duration > 0:
+                    progress = (current_time / total_duration) * 100
+                    db.update_video(video["id"], progress=min(100.0, progress))
+    except Exception as e:
+        # Log error or just let it fail
+        pass
+
+    proc.wait()
+
     if proc.returncode != 0:
         out_path.unlink(missing_ok=True)
-        tail = (proc.stderr or "")[-500:]
-        db.update_video(video["id"], status="error", error_msg=f"encode failed: {tail}")
+        db.update_video(video["id"], status="error", error_msg=f"encode failed with code {proc.returncode}")
         return
 
     try:
         duration, _ = ffprobe_info(out_path)
-    except Exception:  # noqa: BLE001
+    except Exception:
         duration = 0
+    
     db.update_video(
         video["id"], status="completed", encoded_name=out_name,
-        duration=duration, error_msg="",
+        duration=duration, error_msg="", progress=100.0,
     )
 
 

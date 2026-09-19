@@ -10,6 +10,8 @@ from flask import (
 )
 from werkzeug.utils import secure_filename
 
+import os
+import signal
 import config
 import db
 from encoder import worker as encoder_worker
@@ -203,6 +205,15 @@ def video_delete(video_id):
     video = db.get_video(video_id)
     if not video:
         abort(404)
+    
+    pid = video["encode_pid"] if "encode_pid" in video.keys() else None
+    if pid:
+        try:
+            os.kill(pid, signal.SIGTERM)
+            time.sleep(0.2)
+        except (ProcessLookupError, OSError):
+            pass
+
     _remove_video_files(video)
     db.delete_video(video_id)
     return redirect(url_for("stream_detail", stream_id=video["stream_id"]))
@@ -217,6 +228,7 @@ def api_video_statuses(stream_id):
         {
             "id": v["id"], "status": v["status"], "error": v["error_msg"],
             "duration": round(v["duration"] or 0, 1),
+            "progress": v["progress"] if "progress" in v.keys() else 0,
         }
         for v in videos
     ])

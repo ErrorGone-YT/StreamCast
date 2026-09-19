@@ -45,6 +45,15 @@
       <input type="file" id="fileInput" name="video" accept="video/*" multiple hidden>
     </div>
     <div id="selectedInfo" class="hint" style="margin-top:10px"></div>
+    <div id="uploadProgress" style="display:none; margin-top:10px;">
+      <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;">
+        <span id="uploadStatus">Uploading...</span>
+        <span id="uploadPercent">0%</span>
+      </div>
+      <div style="background:#eee; height:6px; border-radius:3px; overflow:hidden;">
+        <div id="uploadBar" style="background:var(--primary, #007bff); width:0%; height:100%; transition: width 0.2s;"></div>
+      </div>
+    </div>
     <button type="submit" class="btn btn-primary" style="margin-top:14px" id="uploadBtn" disabled>Upload</button>
   </form>
 </div>
@@ -69,6 +78,7 @@
       <div style="flex:1; min-width:0">
         <span class="qname" title="{{ v.orig_name }}">{{ v.orig_name }}</span>
         <div class="nowbar" data-nowbar hidden><div class="nowbar-fill" data-nowfill></div></div>
+        <div class="qprogress" data-qprogress hidden style="height:4px; background:#eee; border-radius:2px; margin-top:4px; overflow:hidden;"><div class="qprogress-fill" data-qprogress-fill style="height:100%; background:var(--primary, #007bff); width:0%; transition: width 0.3s;"></div></div>
       </div>
       <span class="nowtag" data-nowtag hidden>● ON AIR</span>
       <span class="qdur" data-dur>{{ '%d:%02d'|format((v.duration or 0)//60, (v.duration or 0)%60) if v.duration else '' }}</span>
@@ -119,6 +129,62 @@ function refreshSelected() {
   uploadBtn.disabled = n === 0;
 }
 
+
+// --- Upload: AJAX with progress ---
+const uploadForm = document.getElementById('uploadForm');
+const uploadProgress = document.getElementById('uploadProgress');
+const uploadBar = document.getElementById('uploadBar');
+const uploadPercent = document.getElementById('uploadPercent');
+const uploadStatus = document.getElementById('uploadStatus');
+
+uploadForm.onsubmit = async (e) => {
+  e.preventDefault();
+  const files = input.files;
+  if (!files.length) return;
+
+  uploadBtn.disabled = true;
+  uploadProgress.style.display = 'block';
+  
+  const formData = new FormData();
+  for (const f of files) {
+    formData.append('video', f);
+  }
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', uploadForm.action);
+  
+  xhr.upload.onprogress = (e) => {
+    if (e.lengthComputable) {
+      const p = Math.round((e.loaded / e.total) * 100);
+      uploadBar.style.width = p + '%';
+      uploadPercent.textContent = p + '%';
+    }
+  };
+
+  xhr.onload = () => {
+    if (xhr.status === 200) {
+      uploadStatus.textContent = 'Upload complete!';
+      uploadBar.style.background = '#28a745';
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+    } else {
+      uploadStatus.textContent = 'Upload failed';
+      uploadBar.style.background = '#dc3545';
+      uploadBtn.disabled = false;
+    }
+  };
+
+  xhr.onerror = () => {
+    uploadStatus.textContent = 'Network error';
+    uploadBar.style.background = '#dc3545';
+    uploadBtn.disabled = false;
+  };
+
+  xhr.send(formData);
+};
+
+
 // --- Drag to reorder queue ---
 const queue = document.getElementById('queue');
 if (queue) {
@@ -162,6 +228,15 @@ async function poll() {
         tag.className = `status-tag st-${v.status}`;
         tag.textContent = v.status.replace('_', ' ');
         tag.title = v.error || '';
+      }
+      
+      const progBar = li.querySelector('[data-qprogress]');
+      const progFill = li.querySelector('[data-qprogress-fill]');
+      if (progBar && progFill) {
+        progBar.hidden = v.status !== 'encoding';
+        if (v.status === 'encoding') {
+          progFill.style.width = (v.progress || 0) + '%';
+        }
       }
       const dur = li.querySelector('[data-dur]');
       if (dur && v.duration && !dur.textContent) {
