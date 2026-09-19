@@ -12,46 +12,22 @@
 
 {% if streams %}
 
-<div style="display:flex; gap:8px; margin:20px 0; flex-wrap:wrap; align-items:center;">
-
+<div style="display:flex; gap:8px; margin:20px 0; flex-wrap:wrap;">
   <button type="button" class="btn filter-btn active" data-filter="all">
     All
   </button>
-
   <button type="button" class="btn filter-btn" data-filter="live">
     🟢 Active
   </button>
-
   <button type="button" class="btn filter-btn" data-filter="offline">
     ⚪ Inactive
   </button>
-
-  <input
-    type="search"
-    id="stream-search"
-    placeholder="Search streams..."
-    autocomplete="off"
-    style="
-      margin-left:auto;
-      min-width:220px;
-      padding:9px 12px;
-      border-radius:8px;
-      border:1px solid rgba(128,128,128,.35);
-      background:inherit;
-      color:inherit;
-      font:inherit;
-      outline:none;
-    "
-  >
-
 </div>
 
 <div class="grid" id="streams-grid">
-
   {% for s in streams %}
   <div class="stream-card stream-item"
-       data-status="{{ 'live' if s.live else 'offline' }}"
-       data-name="{{ s.name|lower }}">
+       data-status="{{ 'live' if s.live else 'offline' }}">
 
     <div class="row">
       {% if s.live %}
@@ -88,7 +64,6 @@
     </div>
 
     <div style="display:flex; gap:8px; margin-top:16px;">
-
       <a href="{{ url_for('stream_detail', stream_id=s.id) }}"
          class="btn"
          style="flex:1; text-align:center;">
@@ -106,63 +81,27 @@
           Delete
         </button>
       </form>
-
     </div>
 
   </div>
   {% endfor %}
-
 </div>
 
 <div id="no-filter-results"
      class="card empty"
      style="display:none;">
-  <p>No streams match your search/filter.</p>
+  <p>No streams match this filter.</p>
 </div>
 
 <script>
-let currentFilter = 'all';
-
 function confirmDelete(name) {
   return confirm(
-    'Delete stream "' + name + '"?\n\n' +
+    'Delete stream "' + name + '"?\\n\\n' +
     'The stream will be stopped and all uploaded videos will be deleted.'
   );
 }
 
-function updateStreams() {
-  const search =
-    document.getElementById('stream-search').value
-      .trim()
-      .toLowerCase();
-
-  let visible = 0;
-
-  document.querySelectorAll('.stream-item').forEach(function(item) {
-
-    const statusMatches =
-      currentFilter === 'all' ||
-      item.dataset.status === currentFilter;
-
-    const nameMatches =
-      !search ||
-      item.dataset.name.includes(search);
-
-    const show = statusMatches && nameMatches;
-
-    item.style.display = show ? '' : 'none';
-
-    if (show) {
-      visible++;
-    }
-  });
-
-  document.getElementById('no-filter-results').style.display =
-    visible === 0 ? 'block' : 'none';
-}
-
 document.querySelectorAll('.filter-btn').forEach(function(button) {
-
   button.addEventListener('click', function() {
 
     document.querySelectorAll('.filter-btn').forEach(function(btn) {
@@ -171,15 +110,25 @@ document.querySelectorAll('.filter-btn').forEach(function(button) {
 
     this.classList.add('active');
 
-    currentFilter = this.dataset.filter;
+    const filter = this.dataset.filter;
+    let visible = 0;
 
-    updateStreams();
+    document.querySelectorAll('.stream-item').forEach(function(item) {
+      const show = filter === 'all' || item.dataset.status === filter;
+
+      item.style.display = show ? '' : 'block';
+
+      if (!show) {
+        item.style.display = 'none';
+      } else {
+        visible++;
+      }
+    });
+
+    document.getElementById('no-filter-results').style.display =
+      visible === 0 ? 'block' : 'none';
   });
-
 });
-
-document.getElementById('stream-search')
-  .addEventListener('input', updateStreams);
 </script>
 
 <style>
@@ -191,24 +140,11 @@ document.getElementById('stream-search')
 .filter-btn:not(.active) {
   opacity: 0.7;
 }
-
-#stream-search:focus {
-  border-color: currentColor;
-}
-
-@media (max-width: 600px) {
-  #stream-search {
-    width: 100%;
-    min-width: 0;
-    margin-left: 0;
-  }
-}
 </style>
 
 {% else %}
 
 <div class="card empty">
-
   <svg width="48" height="48" viewBox="0 0 24 24"
        fill="none" stroke="currentColor" stroke-width="1.5">
     <rect x="2" y="5" width="20" height="14" rx="2"/>
@@ -223,7 +159,6 @@ document.getElementById('stream-search')
      class="btn btn-primary">
     + New stream
   </a>
-
 </div>
 
 {% endif %}
