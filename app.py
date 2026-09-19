@@ -14,8 +14,86 @@ import os
 import signal
 import config
 import db
-from encoder import worker as encoder_worker
+from encoder import ffprobe_info, worker as encoder_worker
 from streamer import manager
+
+# --- Display helpers ---------------------------------------------------------
+def _fmt_size(n):
+    """Human-readable file size, e.g. 1.4 GB."""
+    if not n or n <= 0:
+        return ""
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            return f"{int(n)} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024.0
+
+
+def _fmt_runtime(seconds):
+    """Compact runtime label, e.g. 3h 12m / 45m 03s / 42s. '' when empty."""
+    sec = int(seconds or 0)
+    if sec <= 0:
+        return ""
+    h, rem = divmod(sec, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}h {m:02d}m"
+    if m:
+        return f"{m}m {s:02d}s"
+    return f"{s}s"
+
+
+def _res_label(width, height):
+    """Resolution badge from source dimensions: 4K / 1440p / 1080p / ..."""
+    if not width or not height:
+        return ""
+    m = min(width, height)  # portrait videos still report their height class
+    if m >= 2160:
+        return "4K"
+    if m >= 1440:
+        return "1440p"
+    if m >= 1080:
+        return "1080p"
+    if m >= 720:
+        return "720p"
+    if m >= 480:
+        return "480p"
+    return f"{m}p"
+
+
+def _midcut(name, limit=48, tail=12):
+    """Truncate a long filename in the middle, keeping the extension visible."""
+    if len(name) <= limit:
+        return name
+    head = max(4, limit - tail - 1)
+    return name[:head] + "…" + name[-tail:]
+
+
+def _hydrate_media_meta(v):
+    """Backfill size/resolution for files encoded before those columns existed."""
+    if v["status"] != "completed" or not v["encoded_name"]:
+        return
+    updates = {}
+    if v.get("kind") == "audio" and (v["width"] or v["height"]):
+        # Old rows may carry the embedded album-art dimensions as "resolution".
+        updates["width"] = None
+        updates["height"] = None
+    if not v["size"]:
+        p = config.ENCODED_DIR / v["encoded_name"]
+        if p.exists():
+            updates["size"] = p.stat().st_size
+    if not v["width"] and v.get("kind") != "audio":
+        src = config.UPLOAD_DIR / v["stored_name"]
+        if src.exists():
+            try:
+                _, _, w, h = ffprobe_info(src)
+                if w and h:
+                    updates["width"], updates["height"] = w, h
+            except Exception:
+                pass
+    if updates:
+        db.update_video(v["id"], **updates)
+        v.update(updates)
+
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = config.SECRET_KEY
@@ -65,10 +143,14 @@ def dashboard():
     streams = db.list_streams()
     for s in streams:
         s["live"] = manager.is_live(s["id"])
+        # Runtime = the bigger of the two: video total vs audio total.
+        runtime = max(s["video_duration"], s["audio_duration"])
+        s["runtime_label"] = _fmt_runtime(runtime)
+        s["size_label"] = _fmt_size(s["total_size"])
     return render_template("dashboard.html", streams=streams)
 
 
-# --- Stream CRUD ------------------------------------------------------------
+# --- Stream CRUD -------------------------------------------------------------
 @app.route("/stream/create", methods=["GET", "POST"])
 @login_required
 def stream_create():
@@ -93,10 +175,20 @@ def stream_detail(stream_id):
     stream = db.get_stream(stream_id)
     if not stream:
         abort(404)
-    videos = db.list_videos(stream_id)
+    videos = [dict(v) for v in db.list_videos(stream_id)]
+    for v in videos:
+        _hydrate_media_meta(v)
+        v["res_label"] = _res_label(v.get("width"), v.get("height"))
+        v["size_label"] = _fmt_size(v.get("size"))
+        v["display_name"] = _midcut(v["orig_name"])
     status = manager.status(stream_id)
+    vd, ad, sz = db.stream_totals(stream_id)
+    totals_label = " · ".join(
+        x for x in (_fmt_runtime(max(vd, ad)), _fmt_size(sz)) if x
+    )
     return render_template(
         "stream.html", stream=stream, videos=videos, status=status,
+        totals_label=totals_label,
     )
 
 
@@ -256,15 +348,18 @@ def video_delete(video_id):
 @app.route("/api/video_statuses/<int:stream_id>")
 @login_required
 def api_video_statuses(stream_id):
-    videos = db.list_videos(stream_id)
-    return jsonify([
-        {
+    videos = []
+    for v in db.list_videos(stream_id):
+        d = dict(v)
+        _hydrate_media_meta(d)
+        videos.append({
             "id": v["id"], "status": v["status"], "error": v["error_msg"],
             "duration": round(v["duration"] or 0, 1),
             "progress": v["progress"] if "progress" in v.keys() else 0,
-        }
-        for v in videos
-    ])
+            "res": _res_label(d.get("width"), d.get("height")),
+            "size_label": _fmt_size(d.get("size")),
+        })
+    return jsonify(videos)
 
 
 
@@ -278,11 +373,16 @@ def api_stream_status(stream_id):
             shuffle = bool(stream["shuffle"])
         except:
             shuffle = False
+    vd, ad, sz = db.stream_totals(stream_id)
     res = {
         "live": runner_status.get("live", False),
         "error": runner_status.get("error", ""),
         "now_playing": runner_status.get("now_playing"),
-        "shuffle": shuffle
+        "shuffle": shuffle,
+        "totals": {
+            "runtime": _fmt_runtime(max(vd, ad)),
+            "size": _fmt_size(sz),
+        },
     }
     return jsonify(res)
 

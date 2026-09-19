@@ -19,29 +19,35 @@ import db
 
 
 def ffprobe_info(path):
-    """Return (duration_seconds, fps) for a media file."""
+    """Return (duration_seconds, fps, width, height) for a media file."""
     cmd = [
         config.FFPROBE, "-v", "error",
-        "-select_streams", "v:0",
-        "-show_entries", "stream=avg_frame_rate:format=duration",
+        "-select_streams", "v",
+        "-show_entries", "stream=avg_frame_rate,width,height:stream_disposition=attached_pic:format=duration",
         "-of", "json", str(path),
     ]
     out = subprocess.check_output(cmd, text=True)
     data = json.loads(out)
     duration = float(data.get("format", {}).get("duration", 0) or 0)
     fps = 0.0
-    streams = data.get("streams", [])
+    width = height = None
+    # Embedded album art shows up as a video stream flagged attached_pic — skip
+    # it, otherwise audio tracks would report a bogus "resolution".
+    streams = [s for s in data.get("streams", [])
+               if not s.get("disposition", {}).get("attached_pic")]
     if streams:
+        width = streams[0].get("width")
+        height = streams[0].get("height")
         rate = streams[0].get("avg_frame_rate", "0/0")
         try:
             num, den = rate.split("/")
             fps = float(num) / float(den) if float(den) else 0.0
         except (ValueError, ZeroDivisionError):
             fps = 0.0
-    return duration, fps
+    return duration, fps, width, height
 
 
-def _transcode(video, cmd, out_path, total_duration):
+def _transcode(video, cmd, out_path, total_duration, src_dims=(None, None)):
     """Run an ffmpeg normalize job, streaming progress into the DB."""
     import re
 
@@ -75,13 +81,18 @@ def _transcode(video, cmd, out_path, total_duration):
         return
 
     try:
-        duration, _ = ffprobe_info(out_path)
+        duration, _, _, _ = ffprobe_info(out_path)
     except Exception:
         duration = 0
+    try:
+        size = out_path.stat().st_size
+    except OSError:
+        size = None
 
     db.update_video(
         video["id"], status="completed", encoded_name=out_path.name,
-        duration=duration, error_msg="", progress=100.0,
+        duration=duration, width=src_dims[0], height=src_dims[1],
+        size=size, error_msg="", progress=100.0,
     )
 
 
@@ -95,7 +106,7 @@ def _encode_one(video):
 
     # Enforce the 60fps block rule (video only) before spending CPU on encoding.
     try:
-        src_duration, src_fps = ffprobe_info(src)
+        src_duration, src_fps, src_w, src_h = ffprobe_info(src)
     except Exception as e:  # noqa: BLE001
         db.update_video(video["id"], status="error", error_msg=f"probe failed: {e}")
         return
@@ -140,7 +151,7 @@ def _encode_one(video):
             str(out_path),
         ]
 
-    _transcode(video, cmd, out_path, src_duration)
+    _transcode(video, cmd, out_path, src_duration, src_dims=(src_w, src_h))
 
 
 class EncoderWorker:

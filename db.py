@@ -43,6 +43,9 @@ CREATE TABLE IF NOT EXISTS videos (
     encode_pid    INTEGER,
     position      INTEGER DEFAULT 0,      -- play order within the stream
     kind          TEXT DEFAULT 'video',   -- 'video' | 'audio' (music stream tracks)
+    width         INTEGER,                -- source resolution (px), for the UI
+    height        INTEGER,
+    size          REAL,                   -- encoded file size (bytes)
     created_at    REAL NOT NULL,
     FOREIGN KEY (stream_id) REFERENCES streams(id) ON DELETE CASCADE
 );
@@ -107,6 +110,18 @@ def migrate_db():
             db.execute("ALTER TABLE videos ADD COLUMN kind TEXT DEFAULT 'video'")
         except sqlite3.OperationalError:
             pass
+        try:
+            db.execute("ALTER TABLE videos ADD COLUMN width INTEGER")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            db.execute("ALTER TABLE videos ADD COLUMN height INTEGER")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            db.execute("ALTER TABLE videos ADD COLUMN size REAL")
+        except sqlite3.OperationalError:
+            pass
 
 def init_db():
     config.ensure_dirs()
@@ -137,6 +152,17 @@ def list_streams():
             d["video_count"] = db.execute(
                 "SELECT COUNT(*) c FROM videos WHERE stream_id = ?", (r["id"],)
             ).fetchone()["c"]
+            # Per-kind aggregates for the dashboard (runtime = bigger of the two).
+            by_kind = {}
+            for a in db.execute(
+                "SELECT kind, COALESCE(SUM(duration),0) dur, COALESCE(SUM(size),0) sz "
+                "FROM videos WHERE stream_id = ? GROUP BY kind",
+                (r["id"],),
+            ).fetchall():
+                by_kind[a["kind"] or "video"] = (a["dur"], a["sz"])
+            d["video_duration"] = by_kind.get("video", (0, 0))[0]
+            d["audio_duration"] = by_kind.get("audio", (0, 0))[0]
+            d["total_size"] = sum(sz for _, sz in by_kind.values())
             result.append(d)
         return result
 
@@ -201,6 +227,19 @@ def list_ready_videos(stream_id, kind=None):
     query += " ORDER BY position, id"
     with get_db() as db:
         return db.execute(query, args).fetchall()
+
+def stream_totals(stream_id):
+    """(video_duration, audio_duration, total_size) aggregates for a stream."""
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT kind, COALESCE(SUM(duration),0) dur, COALESCE(SUM(size),0) sz "
+            "FROM videos WHERE stream_id = ? GROUP BY kind",
+            (stream_id,),
+        ).fetchall()
+    by = {(r["kind"] or "video"): (r["dur"], r["sz"]) for r in rows}
+    total_size = sum(sz for _, sz in by.values())
+    return by.get("video", (0, 0))[0], by.get("audio", (0, 0))[0], total_size
+
 
 def update_video(video_id, **fields):
     if not fields:

@@ -137,6 +137,8 @@ h2 { font-size: 17px; font-weight: 700; letter-spacing: -.01em; margin: 0 0 16px
   padding: 10px 17px;
   border-radius: var(--radius-sm);
   font-size: 14px; font-weight: 600;
+  font-family: inherit;
+  line-height: 1.5;
   cursor: pointer;
   transition: transform .15s var(--ease), box-shadow .15s var(--ease), background .15s var(--ease), border-color .15s var(--ease);
   text-decoration: none;
@@ -216,7 +218,8 @@ h2 { font-size: 17px; font-weight: 700; letter-spacing: -.01em; margin: 0 0 16px
 .grid .stream-card:nth-child(n+6) { animation-delay: .24s; }
 .stream-card .name { font-weight: 700; font-size: 17px; margin-top: 14px; letter-spacing: -.01em; display:block; color: var(--text); }
 .stream-card .name:hover { color: var(--accent); }
-.stream-meta { color: var(--muted); font-size: 13px; display: flex; gap: 16px; margin-top: 12px; }
+.stream-meta { color: var(--muted); font-size: 13px; display: flex; gap: 6px 14px; margin-top: 12px; flex-wrap: wrap; align-items: baseline; }
+.stream-meta span { white-space: nowrap; }
 
 /* ---- Status pills ---- */
 .pill {
@@ -274,6 +277,7 @@ input:focus {
   animation: rise .4s var(--ease) both;
 }
 .qitem:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+.qitem > form { margin: 0; display: flex; align-items: center; }
 .qitem.dragging { opacity: .45; transform: scale(.99); }
 .qitem.drag-over { border-color: var(--accent); box-shadow: 0 0 0 4px rgba(59,91,253,.12); }
 .qhandle { cursor: grab; color: #c3c9d4; font-size: 18px; user-select: none; transition: color .15s var(--ease); }
@@ -281,6 +285,12 @@ input:focus {
 .qitem:hover .qhandle { color: var(--accent); }
 .qname { flex: 1; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qdur { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.qres {
+  font-size: 11.5px; font-weight: 700; letter-spacing: .02em;
+  color: var(--accent); background: rgba(109,135,255,.10);
+  padding: 3px 8px; border-radius: 6px; white-space: nowrap;
+}
+.qsize { color: var(--muted); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 /* now-playing (on air) */
 .qitem.on-air {

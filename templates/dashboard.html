@@ -81,8 +81,10 @@
     <div class="stream-meta">
       <span>
         {{ s.video_count }} {{ 'track' if s.stream_type == 'music' else 'video' }}{{ '' if s.video_count == 1 else 's' }}
-        {% if s.stream_type == 'music' %}· 🎵 music{% endif %}
       </span>
+      {% if s.stream_type == 'music' %}<span>🎵 music</span>{% endif %}
+      {% if s.runtime_label %}<span>{{ s.runtime_label }}</span>{% endif %}
+      {% if s.size_label %}<span>{{ s.size_label }}</span>{% endif %}
 
       {% if s.youtube_url %}
         <a href="{{ s.youtube_url }}" target="_blank">YouTube ↗</a>
@@ -93,23 +95,23 @@
 
       <a href="{{ url_for('stream_detail', stream_id=s.id) }}"
          class="btn"
-         style="flex:1; text-align:center;">
+         style="flex:1; justify-content:center;">
         Open
       </a>
 
       <a href="{{ url_for('stream_edit', stream_id=s.id) }}"
          class="btn"
-         style="flex:1; text-align:center;">
+         style="flex:1; justify-content:center;">
         Edit
       </a>
 
       <form method="POST"
             action="{{ url_for('stream_delete', stream_id=s.id) }}"
             onsubmit="return confirmDelete({{ s.name|tojson|forceescape }});"
-            style="margin:0;">
+            style="margin:0; flex:1; display:flex;">
         <button type="submit"
                 class="btn"
-                style="color:#d9534f;"
+                style="color:#d9534f; width:100%; justify-content:center;"
                 title="Delete stream">
           Delete
         </button>
