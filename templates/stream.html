@@ -119,6 +119,12 @@
 const streamId = {{ stream.id }};
 
 
+
+
+
+
+
+
 // --- Upload: dropzone + file picker ---
 const dz = document.getElementById('dropzone');
 const input = document.getElementById('fileInput');
@@ -135,7 +141,6 @@ if (dz && input) {
   dz.ondrop = (ev) => { 
     ev.preventDefault(); 
     dz.classList.remove('hover');
-    // Create a temporary array since we can't modify input.files
     window.pendingUploadFiles = Array.from(ev.dataTransfer.files);
     info.textContent = `${window.pendingUploadFiles.length} file(s) selected`;
     uploadBtn.disabled = window.pendingUploadFiles.length === 0;
@@ -147,15 +152,42 @@ if (dz && input) {
   };
 }
 
+let activeUploads = new Map();
+
 if (uploadForm) {
   uploadForm.onsubmit = async (e) => {
     e.preventDefault();
     const files = window.pendingUploadFiles || Array.from(input.files);
     if (files.length === 0) return;
 
-    uploadBtn.disabled = true;
-    uploadBtn.textContent = 'Uploading...';
+    uploadBtn.disabled = false; 
+    uploadBtn.textContent = 'Cancel All';
+    uploadBtn.style.setProperty('background-color', '#dc3545', 'important');
+    uploadBtn.style.setProperty('border-color', '#dc3545', 'important');
+    uploadBtn.style.setProperty('color', '#fff', 'important');
     
+    const originalOnsubmit = uploadForm.onsubmit;
+    uploadForm.onsubmit = (ev) => {
+      ev.preventDefault();
+      activeUploads.forEach(xhr => xhr.abort());
+      activeUploads.clear();
+      
+      uploadBtn.textContent = 'Upload';
+      uploadBtn.style.removeProperty('background-color');
+      uploadBtn.style.removeProperty('border-color');
+      uploadBtn.style.removeProperty('color');
+      uploadBtn.disabled = files.length === 0;
+      
+      window.pendingUploadFiles = [];
+      if (input) input.value = '';
+      info.textContent = '';
+      uploadBtn.disabled = true;
+      
+      uploadList.style.display = 'none';
+      uploadItems.innerHTML = '';
+      uploadForm.onsubmit = originalOnsubmit;
+    };
+
     uploadList.style.display = 'block';
     uploadItems.innerHTML = '';
 
@@ -168,17 +200,33 @@ if (uploadForm) {
           <div class="u-fill" style="height:100%; background:var(--primary, #007bff); width:0%; transition:width 0.2s;"></div>
         </div>
         <span class="u-percent" style="width:30px; text-align:right; font-size:11px;">0%</span>
+        <button type="button" class="btn-cancel" style="background:none; border:none; color:red; cursor:pointer; font-weight:bold; padding:0 5px;">✕</button>
       `;
       uploadItems.appendChild(row);
 
       const pFill = row.querySelector('.u-fill');
       const pText = row.querySelector('.u-percent');
+      const cancelBtn = row.querySelector('.btn-cancel');
 
       const formData = new FormData();
       formData.append('video', file);
 
       return new Promise((resolve) => {
         const xhr = new XMLHttpRequest();
+        const fileKey = file.name + '_' + index;
+        activeUploads.set(fileKey, xhr);
+        
+        cancelBtn.onclick = (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          xhr.abort();
+          row.style.opacity = '0.5';
+          pText.textContent = 'Canceled';
+          cancelBtn.style.display = 'none';
+          activeUploads.delete(fileKey);
+          resolve();
+        };
+
         xhr.open('POST', uploadForm.action);
         xhr.upload.onprogress = (ev) => {
           if (ev.lengthComputable) {
@@ -195,11 +243,15 @@ if (uploadForm) {
             row.style.color = 'red';
             pText.textContent = 'Err';
           }
+          cancelBtn.style.display = 'none';
+          activeUploads.delete(fileKey);
           resolve();
         };
         xhr.onerror = () => {
           row.style.color = 'red';
           pText.textContent = 'Err';
+          cancelBtn.style.display = 'none';
+          activeUploads.delete(fileKey);
           resolve();
         };
         xhr.send(formData);
@@ -207,8 +259,13 @@ if (uploadForm) {
     });
 
     await Promise.all(uploadPromises);
-    uploadBtn.disabled = false;
+    
     uploadBtn.textContent = 'Upload';
+    uploadBtn.style.removeProperty('background-color');
+    uploadBtn.style.removeProperty('border-color');
+    uploadBtn.style.removeProperty('color');
+    uploadBtn.disabled = false;
+    uploadForm.onsubmit = originalOnsubmit;
     setTimeout(() => window.location.reload(), 1000);
   };
 }
