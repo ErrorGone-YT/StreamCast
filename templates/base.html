@@ -4,21 +4,31 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}StreamCast{% endblock %}</title>
+  <script>
+    // Apply the saved theme before first paint to avoid a light flash.
+    (function () {
+      var t = null;
+      try { t = localStorage.getItem('sc-theme'); } catch (e) {}
+      if (t !== 'dark' && t !== 'light') {
+        t = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-  {% if session.get('authed') %}
   <div class="topbar">
     <a href="{{ url_for('dashboard') }}" class="brand"><span class="dot"></span>StreamCast</a>
     <nav>
+      <button type="button" id="themeToggle" class="theme-toggle" title="Toggle dark theme" aria-label="Toggle dark theme">🌙</button>
       <a href="{{ url_for('dashboard') }}">Streams</a>
-      <a href="{{ url_for('logout') }}">Log out</a>
+      {% if session.get('authed') %}<a href="{{ url_for('logout') }}">Log out</a>{% endif %}
     </nav>
   </div>
-  {% endif %}
   <div class="container">
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% for cat, msg in messages %}
@@ -28,5 +38,23 @@
     {% block body %}{% endblock %}
   </div>
   {% block scripts %}{% endblock %}
+  <script>
+    // Theme toggle: top-right, persisted per browser.
+    (function () {
+      var btn = document.getElementById('themeToggle');
+      if (!btn) return;
+      var root = document.documentElement;
+      var setIcon = function () {
+        btn.textContent = root.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙';
+      };
+      setIcon();
+      btn.addEventListener('click', function () {
+        var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+        root.setAttribute('data-theme', next);
+        try { localStorage.setItem('sc-theme', next); } catch (e) {}
+        setIcon();
+      });
+    })();
+  </script>
 </body>
 </html>

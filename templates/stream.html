@@ -18,7 +18,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: #ccc;
+  background-color: var(--border-strong);
   transition: .4s;
   border-radius: 34px;
 }
@@ -34,7 +34,7 @@
   border-radius: 50%;
 }
 input:checked + .slider {
-  background-color: var(--primary, #007bff);
+  background-color: var(--accent, #007bff);
 }
 input:checked + .slider:before {
   transform: translateX(14px);
@@ -101,13 +101,13 @@ input:checked + .slider:before {
         <span id="uploadStatus">Uploading...</span>
         <span id="uploadPercent">0%</span>
       </div>
-      <div style="background:#eee; height:6px; border-radius:3px; overflow:hidden;">
-        <div id="uploadBar" style="background:var(--primary, #007bff); width:0%; height:100%; transition: width 0.2s;"></div>
+      <div style="background:var(--border); height:6px; border-radius:3px; overflow:hidden;">
+        <div id="uploadBar" style="background:var(--accent, #007bff); width:0%; height:100%; transition: width 0.2s;"></div>
       </div>
     </div>
     
     <div id="uploadList" style="margin-top:15px; display:none;">
-      <div style="font-size:13px; font-weight:bold; margin-bottom:8px; color:var(--text-muted, #666);">Uploading files:</div>
+      <div style="font-size:13px; font-weight:bold; margin-bottom:8px; color:var(--muted, #666);">Uploading files:</div>
       <div id="uploadItems" style="display:flex; flex-direction:column; gap:8px;"></div>
     </div>
 
@@ -122,7 +122,7 @@ input:checked + .slider:before {
     <div style="margin-bottom:15px;">
       <h2 style="margin:0">{{ 'Audio queue' if stream.stream_type == 'music' else 'Video queue' }}</h2>
     <span class="spacer"></span>
-      <div style="display:flex; justify-content:flex-end; align-items:center; gap:8px; font-size:13px; color:var(--text-muted, #666); margin-top:8px;">
+      <div style="display:flex; justify-content:flex-end; align-items:center; gap:8px; font-size:13px; color:var(--muted, #666); margin-top:8px;">
         <span style="font-weight:500;">Random Play</span>
         <label class="switch">
           <input type="checkbox" id="shuffleToggle" {{ 'checked' if stream.shuffle else '' }}>
@@ -139,7 +139,7 @@ input:checked + .slider:before {
     One video file loops as the visual while audio tracks play over it.
     {% if not stream.loop_video_id %}<b>No loop video selected yet</b> — upload a video file and pick it below.{% endif %}
   </p>
-  <div style="display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin:-6px 0 16px; font-size:13px; color:var(--text-muted, #666);">
+  <div style="display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin:-6px 0 16px; font-size:13px; color:var(--muted, #666);">
     <span style="font-weight:500;">Video sound</span>
     <label class="switch" style="vertical-align:middle">
       <input type="checkbox" id="mixToggle" {{ 'checked' if stream.mix_video_audio else '' }}>
@@ -156,7 +156,7 @@ input:checked + .slider:before {
     </span>
   </div>
   {% else %}
-  <div style="display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin:-6px 0 16px; font-size:13px; color:var(--text-muted, #666);">
+  <div style="display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin:-6px 0 16px; font-size:13px; color:var(--muted, #666);">
     <span style="font-weight:500;">Audio volume</span>
     <input type="range" id="streamVol" min="0" max="200" step="5" value="{{ ((stream.stream_volume if stream.stream_volume is not none else 1.0) * 100) | round | int }}" style="width:130px;">
     <span id="streamVolVal">{{ ((stream.stream_volume if stream.stream_volume is not none else 1.0) * 100) | round | int }}%</span>
@@ -176,7 +176,7 @@ input:checked + .slider:before {
       <div style="flex:1; min-width:0">
         <span class="qname" title="{{ v.orig_name }}">{{ v.orig_name }}</span>
         <div class="nowbar" data-nowbar hidden><div class="nowbar-fill" data-nowfill></div></div>
-        <div class="qprogress" data-qprogress hidden style="height:4px; background:#eee; border-radius:2px; margin-top:4px; overflow:hidden;"><div class="qprogress-fill" data-qprogress-fill style="height:100%; background:var(--primary, #007bff); width:0%; transition: width 0.3s;"></div></div>
+        <div class="qprogress" data-qprogress hidden style="height:4px; background:var(--border); border-radius:2px; margin-top:4px; overflow:hidden;"><div class="qprogress-fill" data-qprogress-fill style="height:100%; background:var(--accent, #007bff); width:0%; transition: width 0.3s;"></div></div>
       </div>
       <span class="nowtag" data-nowtag hidden>● ON AIR</span>
       {% if stream.stream_type == 'music' and v.kind == 'video' %}
@@ -303,11 +303,11 @@ if (uploadForm) {
     const uploadPromises = files.map(async (file, index) => {
       const row = document.createElement('div');
       // FIXED: Removed the gap:10px and replaced it with structured margins/paddings to ensure stability
-      row.style.cssText = 'display:flex; align-items:center; font-size:13px; padding:8px; background:#f9f9f9; border-radius:4px; border:1px solid #eee;';
+      row.style.cssText = 'display:flex; align-items:center; font-size:13px; padding:8px; background:var(--surface-2); border-radius:4px; border:1px solid var(--border);';
       row.innerHTML = `
         <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-right:10px;">${file.name}</span>
-        <div style="flex:1; height:4px; background:#ddd; border-radius:2px; overflow:hidden; margin-right:10px;">
-          <div class="u-fill" style="height:100%; background:var(--primary, #007bff); width:0%; transition:width 0.2s;"></div>
+        <div style="flex:1; height:4px; background:var(--border); border-radius:2px; overflow:hidden; margin-right:10px;">
+          <div class="u-fill" style="height:100%; background:var(--accent, #007bff); width:0%; transition:width 0.2s;"></div>
         </div>
         <span class="u-percent" style="width:45px; text-align:right; font-size:11px; display:inline-block; margin-right:10px;">0%</span>
         <button type="button" class="btn-cancel" style="background:none; border:none; color:red; cursor:pointer; font-weight:bold; padding:0; width:20px; text-align:right;">✕</button>

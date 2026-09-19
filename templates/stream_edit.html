@@ -6,16 +6,16 @@
   @media (max-width: 560px) { .type-picker { grid-template-columns:1fr; } }
   .type-option {
     display:flex; flex-direction:column; gap:4px;
-    border:1px solid rgba(128,128,128,.35); border-radius:10px;
+    border:1px solid var(--border-strong); border-radius:10px;
     padding:12px 14px; cursor:pointer;
   }
   .type-option:has(input:checked) {
-    border-color: var(--primary, #007bff);
-    box-shadow: 0 0 0 1px var(--primary, #007bff) inset;
+    border-color: var(--accent, #007bff);
+    box-shadow: 0 0 0 1px var(--accent, #007bff) inset;
   }
   .type-option input { margin:0 6px 0 0; vertical-align:-2px; }
   .type-title { font-weight:600; }
-  .type-desc { font-size:12px; color:var(--text-muted, #888); }
+  .type-desc { font-size:12px; color:var(--muted, #888); }
 </style>
 <div class="page-head">
   <div>

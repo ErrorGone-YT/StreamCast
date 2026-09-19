@@ -36,9 +36,10 @@
       min-width:220px;
       padding:9px 12px;
       border-radius:8px;
-      border:1px solid rgba(128,128,128,.35);
-      background:inherit;
-      color:inherit;
+      border:1px solid var(--border-strong);
+      background:var(--surface);
+      color:var(--text);
+      caret-color:var(--text);
       font:inherit;
       outline:none;
     "
@@ -200,7 +201,8 @@ document.getElementById('stream-search')
 }
 
 #stream-search:focus {
-  border-color: currentColor;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(59,91,253,.14);
 }
 
 @media (max-width: 600px) {

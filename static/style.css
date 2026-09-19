@@ -5,6 +5,7 @@
    ========================================================================= */
 
 :root {
+  color-scheme: light;
   --bg: #f4f6fb;
   --surface: #ffffff;
   --surface-2: #fbfcfe;
@@ -244,6 +245,7 @@ input[type=text], input[type=password], input[type=url], input[type=datetime-loc
   font-family: inherit;
   background: var(--surface-2);
   color: var(--text);
+  caret-color: var(--text);
   transition: border-color .15s var(--ease), box-shadow .15s var(--ease), background .15s var(--ease);
 }
 input::placeholder { color: #aab1bf; }
@@ -367,3 +369,89 @@ input:focus {
 }
 .login-card .brand { justify-content: center; margin-bottom: 6px; font-size: 24px; }
 .login-card .subtitle { text-align: center; }
+
+/* =========================================================================
+   Dark theme — deep space blue with soft glow accents
+   ========================================================================= */
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0b0e15;
+  --surface: #141824;
+  --surface-2: #1a2030;
+  --border: #242c40;
+  --border-strong: #303a54;
+  --text: #e9edf6;
+  --text-2: #c5cddd;
+  --muted: #8b95ab;
+  --accent: #6d87ff;
+  --accent-2: #8fa4ff;
+  --accent-hover: #8fa4ff;
+  --live: #ff4d64;
+  --ok: #2dd4a0;
+  --warn: #fbbf24;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.30), 0 2px 6px rgba(0,0,0,.25);
+  --shadow-md: 0 4px 12px rgba(0,0,0,.35), 0 12px 28px rgba(0,0,0,.35);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,.40), 0 24px 56px rgba(0,0,0,.45);
+}
+
+/* Aurora blooms tuned for dark: dimmer, more glow-like */
+html[data-theme="dark"] body::before {
+  background:
+    radial-gradient(38vmax 38vmax at 12% 8%, rgba(109,135,255,.14), transparent 60%),
+    radial-gradient(32vmax 32vmax at 88% 12%, rgba(93,115,255,.09), transparent 62%),
+    radial-gradient(40vmax 40vmax at 78% 92%, rgba(45,212,160,.06), transparent 60%),
+    radial-gradient(30vmax 30vmax at 20% 96%, rgba(255,77,100,.05), transparent 60%);
+}
+
+html[data-theme="dark"] .topbar {
+  background: rgba(15,19,30,.75);
+  border-bottom-color: rgba(36,44,64,.9);
+}
+html[data-theme="dark"] input::placeholder { color: #5c677e; }
+html[data-theme="dark"] input:focus { background: var(--surface); }
+html[data-theme="dark"] .btn:hover { border-color: var(--accent); }
+html[data-theme="dark"] .btn-danger:hover { background: rgba(255,77,100,.10); border-color: rgba(255,77,100,.35); }
+html[data-theme="dark"] .pill-live { background: rgba(255,77,100,.12); box-shadow: inset 0 0 0 1px rgba(255,77,100,.22); }
+html[data-theme="dark"] .pill-off { background: rgba(255,255,255,.06); }
+html[data-theme="dark"] .pill-off .pdot { background: #5a6479; }
+html[data-theme="dark"] .qhandle { color: #49536a; }
+html[data-theme="dark"] .qitem.on-air {
+  background: linear-gradient(180deg, rgba(109,135,255,.15), rgba(109,135,255,.06));
+}
+html[data-theme="dark"] .st-waiting_encode { background: rgba(255,255,255,.07); }
+html[data-theme="dark"] .st-encoding {
+  background: linear-gradient(90deg, rgba(109,135,255,.14), rgba(109,135,255,.30), rgba(109,135,255,.14));
+  background-size: 200% 100%;
+  color: var(--accent-2);
+}
+html[data-theme="dark"] .st-completed { background: rgba(45,212,160,.13); }
+html[data-theme="dark"] .st-error { background: rgba(255,77,100,.13); }
+html[data-theme="dark"] .flash-ok { background: rgba(45,212,160,.12); color: #55e6bb; border-color: rgba(45,212,160,.32); }
+html[data-theme="dark"] .flash-error { background: rgba(255,77,100,.12); color: #ff8b9c; border-color: rgba(255,77,100,.32); }
+html[data-theme="dark"] .dropzone:hover,
+html[data-theme="dark"] .dropzone.hover { background: rgba(109,135,255,.10); }
+html[data-theme="dark"] .login-card {
+  background: rgba(17,21,33,.85);
+  border-color: rgba(255,255,255,.08);
+}
+
+/* ---- Theme toggle button (topbar, leftmost of the right-side group) ---- */
+.topbar nav { display: flex; align-items: center; }
+.theme-toggle {
+  width: 38px; height: 38px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0;
+  transition: transform .25s var(--ease), border-color .15s var(--ease), box-shadow .15s var(--ease), background .15s var(--ease);
+}
+.theme-toggle:hover {
+  transform: rotate(18deg) scale(1.08);
+  border-color: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+.topbar nav .theme-toggle { margin-left: 0; margin-right: 22px; }
