@@ -25,6 +25,19 @@ import config
 import db
 
 
+def _has_audio_stream(path):
+    """True if the media file carries at least one audio stream."""
+    try:
+        out = subprocess.check_output(
+            [config.FFPROBE, "-v", "error", "-select_streams", "a:0",
+             "-show_entries", "stream=index", "-of", "csv=p=0", str(path)],
+            text=True,
+        )
+        return bool(out.strip())
+    except Exception:
+        return False
+
+
 class _Runner:
     """Owns one ffmpeg process + watchdog for a single stream."""
 
@@ -33,6 +46,8 @@ class _Runner:
         self.proc = None
         self.playlist_path = None
         self.loop_video_path = None     # music mode: video looped as the background
+        self._mix_video_audio = False   # music mode: mix the background's own sound
+        self._video_volume = 0.5        # music mode: background sound level (0..1)
         self._stop = threading.Event()
         self._reload = threading.Event()   # set to force an immediate block restart
         self._thread = None
@@ -84,6 +99,16 @@ class _Runner:
                 self.last_error = "No loop video selected — upload a video and set it as the background"
                 return None, [], 0.0
             self.loop_video_path = (config.ENCODED_DIR / loop_video["encoded_name"]).resolve()
+            self._mix_video_audio = bool(
+                stream["mix_video_audio"] if "mix_video_audio" in stream.keys() else False
+            )
+            self._video_volume = float(
+                stream["video_volume"] if "video_volume" in stream.keys() and
+                stream["video_volume"] is not None else 0.5
+            )
+            if self._mix_video_audio and not _has_audio_stream(self.loop_video_path):
+                # Background has no sound to mix — fall back to playlist-only audio.
+                self._mix_video_audio = False
         else:
             videos_base = db.list_ready_videos(self.stream_id)
             if not videos_base:
@@ -134,8 +159,34 @@ class _Runner:
         rtmp_url = f"{config.RTMP_BASE}/{stream['rtmp_key']}"
         if self.loop_video_path is not None:
             # Music stream: one video loops forever as the visual, its audio is
-            # replaced by the block's audio playlist. -shortest ends the block
-            # when the playlist finishes, same block cycle as video streams.
+            # replaced (or mixed, see below) with the block's audio playlist.
+            # -shortest ends the block when the playlist finishes, same block
+            # cycle as video streams.
+            if self._mix_video_audio:
+                vol = max(0.0, min(1.0, self._video_volume))
+                return [
+                    config.FFMPEG, "-hide_banner", "-loglevel", "warning",
+                    "-stream_loop", "-1", "-re",  # loop the background video forever
+                    "-i", str(self.loop_video_path),
+                    "-f", "concat", "-safe", "0", "-re",
+                    "-i", str(self.playlist_path),
+                    "-filter_complex",
+                    # Background sound at video_volume under the playlist at 100%.
+                    # normalize=0 keeps our explicit levels; duration=shortest ends
+                    # the mix with the playlist (the looped background never ends).
+                    "[0:a]aformat=sample_rates=44100:channel_layouts=stereo,"
+                    f"volume={vol}[bg];"
+                    "[1:a]aformat=sample_rates=44100:channel_layouts=stereo,"
+                    "volume=1.0[pl];"
+                    "[bg][pl]amix=inputs=2:duration=shortest:normalize=0[mix]",
+                    "-map", "0:v:0", "-map", "[mix]",
+                    "-c:v", "copy",           # background video is pre-normalized
+                    "-c:a", "aac", "-b:a", config.AUDIO_BITRATE, "-ar", "44100", "-ac", "2",
+                    "-shortest",
+                    "-f", "flv",
+                    "-flvflags", "no_duration_filesize",
+                    rtmp_url,
+                ]
             return [
                 config.FFMPEG, "-hide_banner", "-loglevel", "warning",
                 "-stream_loop", "-1", "-re",  # loop the background video forever

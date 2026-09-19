@@ -287,6 +287,24 @@ def api_stream_status(stream_id):
     return jsonify(res)
 
 
+@app.route('/api/stream_mix/<int:stream_id>', methods=['POST'])
+@login_required
+def stream_mix(stream_id):
+    """Music streams: mix the background video's own sound under the playlist."""
+    try:
+        data = request.get_json() or {}
+        enabled = bool(data.get('enabled', False))
+        fields = {'mix_video_audio': 1 if enabled else 0}
+        if 'volume' in data:
+            vol = max(0, min(100, int(data['volume'])))
+            fields['video_volume'] = vol / 100.0
+        db.update_stream(stream_id, **fields)
+        manager.apply_now(stream_id)
+        return jsonify({'status': 'ok', 'enabled': enabled})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
 @app.route("/api/reorder", methods=["POST"])
 @login_required
 def api_reorder():

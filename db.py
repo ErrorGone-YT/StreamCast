@@ -23,7 +23,9 @@ CREATE TABLE IF NOT EXISTS streams (
     created_at    REAL NOT NULL,
     shuffle       INTEGER DEFAULT 0,      -- 1 = random play enabled
     stream_type   TEXT DEFAULT 'video',   -- 'video' | 'music'
-    loop_video_id INTEGER                -- music: video row looped as the background
+    loop_video_id INTEGER,                -- music: video row looped as the background
+    mix_video_audio INTEGER DEFAULT 0,    -- music: mix the background video's own sound
+    video_volume  REAL DEFAULT 0.5        -- music: background video sound level (0..1)
 );
 
 CREATE TABLE IF NOT EXISTS videos (
@@ -81,6 +83,14 @@ def migrate_db():
             pass
         try:
             db.execute("ALTER TABLE streams ADD COLUMN loop_video_id INTEGER")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            db.execute("ALTER TABLE streams ADD COLUMN mix_video_audio INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            db.execute("ALTER TABLE streams ADD COLUMN video_volume REAL DEFAULT 0.5")
         except sqlite3.OperationalError:
             pass
         try:

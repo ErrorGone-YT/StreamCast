@@ -140,6 +140,17 @@ input:checked + .slider:before {
     One video file loops as the visual while audio tracks play over it.
     {% if not stream.loop_video_id %}<b>No loop video selected yet</b> — upload a video file and pick it below.{% endif %}
   </p>
+  <div style="display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin:-6px 0 16px; font-size:13px; color:var(--text-muted, #666);">
+    <span style="font-weight:500;">Video sound</span>
+    <label class="switch" style="vertical-align:middle">
+      <input type="checkbox" id="mixToggle" {{ 'checked' if stream.mix_video_audio else '' }}>
+      <span class="slider round"></span>
+    </label>
+    <span id="mixVolWrap" style="display:flex; align-items:center; gap:6px; {{ '' if stream.mix_video_audio else 'visibility:hidden;' }}">
+      <input type="range" id="mixVol" min="0" max="100" step="5" value="{{ ((stream.video_volume or 0.5) * 100) | round | int }}" style="width:130px;">
+      <span id="mixVolVal">{{ ((stream.video_volume or 0.5) * 100) | round | int }}%</span>
+    </span>
+  </div>
   {% endif %}
   {% if status.live %}
   <p class="hint" id="liveEditHint" style="margin:-6px 0 16px">
@@ -386,6 +397,37 @@ if (shuffleToggle) {
       shuffleToggle.checked = !enabled;
     }
   };
+}
+
+// --- Video sound (music stream mixing) ---
+const mixToggle = document.getElementById('mixToggle');
+const mixVolWrap = document.getElementById('mixVolWrap');
+const mixVol = document.getElementById('mixVol');
+const mixVolVal = document.getElementById('mixVolVal');
+
+async function sendMixSettings() {
+  const body = { enabled: mixToggle.checked };
+  if (mixVol) body.volume = +mixVol.value;
+  try {
+    await fetch(`/api/stream_mix/${streamId}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+  } catch (e) {
+    console.error('Failed to update video sound settings', e);
+  }
+}
+
+if (mixToggle && mixVolWrap) {
+  mixToggle.onchange = () => {
+    mixVolWrap.style.visibility = mixToggle.checked ? 'visible' : 'hidden';
+    sendMixSettings();
+  };
+}
+if (mixVol && mixVolVal) {
+  mixVol.oninput = () => { mixVolVal.textContent = mixVol.value + '%'; };
+  mixVol.onchange = sendMixSettings;  // send once on release, not per tick
 }
 // --- Drag to reorder queue ---
 const queue = document.getElementById('queue');
