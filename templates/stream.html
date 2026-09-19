@@ -82,12 +82,18 @@ input:checked + .slider:before {
 
 <!-- Upload -->
 <div class="card">
-  <h2>Add videos</h2>
+  <h2>Add {{ 'audio' if stream.stream_type == 'music' else 'videos' }}</h2>
   <form id="uploadForm" method="post" action="{{ url_for('upload', stream_id=stream.id) }}" enctype="multipart/form-data">
     <div class="dropzone" id="dropzone">
+      {% if stream.stream_type == 'music' %}
+      <div>Drag &amp; drop audio files here, or <b>click to browse</b></div>
+      <div class="hint" style="margin-top:6px">mp3, wav, flac, ogg, m4a — tracks are normalized before streaming. Upload one video file too and set it as the loop background below.</div>
+      <input type="file" id="fileInput" name="video" accept="audio/*,video/*" multiple hidden>
+      {% else %}
       <div>Drag &amp; drop videos here, or <b>click to browse</b></div>
       <div class="hint" style="margin-top:6px">mp4, mov, mkv, webm — 60fps files are blocked. Files are normalized before streaming.</div>
       <input type="file" id="fileInput" name="video" accept="video/*" multiple hidden>
+      {% endif %}
     </div>
     <div id="selectedInfo" class="hint" style="margin-top:10px"></div>
     <div id="uploadProgress" style="display:none; margin-top:10px;">
@@ -114,7 +120,7 @@ input:checked + .slider:before {
   <div class="row" style="margin-bottom:16px">
     
     <div style="margin-bottom:15px;">
-      <h2 style="margin:0">Video queue</h2>
+      <h2 style="margin:0">{{ 'Audio queue' if stream.stream_type == 'music' else 'Video queue' }}</h2>
     <span class="spacer"></span>
       <div style="display:flex; justify-content:flex-end; align-items:center; gap:8px; font-size:13px; color:var(--text-muted, #666); margin-top:8px;">
         <span style="font-weight:500;">Random Play</span>
@@ -125,10 +131,16 @@ input:checked + .slider:before {
       </div>
     </div>
 
-    
+
 </div>
     <span id="queueHint" class="muted" style="font-size:13px">Drag to reorder — this is the play order</span>
   </div>
+  {% if stream.stream_type == 'music' %}
+  <p class="hint" style="margin:-6px 0 16px">
+    One video file loops as the visual while audio tracks play over it.
+    {% if not stream.loop_video_id %}<b>No loop video selected yet</b> — upload a video file and pick it below.{% endif %}
+  </p>
+  {% endif %}
   {% if status.live %}
   <p class="hint" id="liveEditHint" style="margin:-6px 0 16px">
     Stream is live. Changes to the queue apply automatically at the next block, or hit <b>Apply queue now</b> above to switch immediately.
@@ -145,6 +157,15 @@ input:checked + .slider:before {
         <div class="qprogress" data-qprogress hidden style="height:4px; background:#eee; border-radius:2px; margin-top:4px; overflow:hidden;"><div class="qprogress-fill" data-qprogress-fill style="height:100%; background:var(--primary, #007bff); width:0%; transition: width 0.3s;"></div></div>
       </div>
       <span class="nowtag" data-nowtag hidden>● ON AIR</span>
+      {% if stream.stream_type == 'music' and v.kind == 'video' %}
+        {% if stream.loop_video_id == v.id %}
+        <span class="pill pill-off" style="font-size:11px; white-space:nowrap">◐ LOOP BG</span>
+        {% else %}
+        <form method="post" action="{{ url_for('video_set_loop', video_id=v.id) }}">
+          <button class="btn btn-sm" title="Use this video as the looping background">◐ Loop BG</button>
+        </form>
+        {% endif %}
+      {% endif %}
       <span class="qdur" data-dur>{{ '%d:%02d'|format((v.duration or 0)//60, (v.duration or 0)%60) if v.duration else '' }}</span>
       <span class="status-tag st-{{ v.status }}" data-status title="{{ v.error_msg }}">{{ v.status.replace('_',' ') }}</span>
       <form method="post" action="{{ url_for('video_delete', video_id=v.id) }}" onsubmit="return confirm('Delete this video?')">
@@ -154,7 +175,7 @@ input:checked + .slider:before {
     {% endfor %}
   </ul>
   {% else %}
-  <div class="empty" style="padding:32px">No videos yet. Upload some above to build your 24/7 loop.</div>
+  <div class="empty" style="padding:32px">{% if stream.stream_type == 'music' %}No audio yet. Upload audio tracks to build your 24/7 music loop.{% else %}No videos yet. Upload some above to build your 24/7 loop.{% endif %}</div>
   {% endif %}
 </div>
 

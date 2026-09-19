@@ -32,6 +32,7 @@ class _Runner:
         self.stream_id = stream_id
         self.proc = None
         self.playlist_path = None
+        self.loop_video_path = None     # music mode: video looped as the background
         self._stop = threading.Event()
         self._reload = threading.Event()   # set to force an immediate block restart
         self._thread = None
@@ -57,15 +58,38 @@ class _Runner:
 
         Returns (path, play_order, block_total): play_order is the flattened
         list of {id, duration} in the exact order the block plays them, and
-        block_total is its summed duration.
+        block_total is its summed duration. For music streams the entries are
+        audio tracks; the visual is one looped video (self.loop_video_path).
+        Sets self.last_error and returns (None, [], 0.0) when nothing is
+        ready to play.
         """
-        videos_base = db.list_ready_videos(self.stream_id)
-        if not videos_base:
-            return None, [], 0.0
-
         stream = db.get_stream(self.stream_id)
+        stream_type = stream["stream_type"] if stream and "stream_type" in stream.keys() else "video"
+        is_music = stream_type == "music"
         is_shuffle = bool(stream["shuffle"]) if stream else False
         loop = bool(stream["loop_queue"]) if stream else False
+
+        if is_music:
+            videos_base = db.list_ready_videos(self.stream_id, kind="audio")
+            if not videos_base:
+                self.last_error = "No ready audio files in queue"
+                return None, [], 0.0
+            loop_video = None
+            loop_id = stream["loop_video_id"] if stream and "loop_video_id" in stream.keys() else None
+            if loop_id:
+                lv = db.get_video(loop_id)
+                if lv and lv["status"] == "completed" and lv["encoded_name"]:
+                    loop_video = lv
+            if loop_video is None:
+                self.last_error = "No loop video selected — upload a video and set it as the background"
+                return None, [], 0.0
+            self.loop_video_path = (config.ENCODED_DIR / loop_video["encoded_name"]).resolve()
+        else:
+            videos_base = db.list_ready_videos(self.stream_id)
+            if not videos_base:
+                self.last_error = "No ready videos in queue"
+                return None, [], 0.0
+            self.loop_video_path = None
 
         one_pass = sum((v["duration"] or 0) for v in videos_base)
         repeats = 1
@@ -108,6 +132,24 @@ class _Runner:
 
     def _ffmpeg_cmd(self, stream):
         rtmp_url = f"{config.RTMP_BASE}/{stream['rtmp_key']}"
+        if self.loop_video_path is not None:
+            # Music stream: one video loops forever as the visual, its audio is
+            # replaced by the block's audio playlist. -shortest ends the block
+            # when the playlist finishes, same block cycle as video streams.
+            return [
+                config.FFMPEG, "-hide_banner", "-loglevel", "warning",
+                "-stream_loop", "-1", "-re",  # loop the background video forever
+                "-i", str(self.loop_video_path),
+                "-f", "concat", "-safe", "0", "-re",
+                "-i", str(self.playlist_path),
+                "-map", "0:v:0", "-map", "1:a:0",
+                "-c:v", "copy",           # background video is pre-normalized
+                "-c:a", "aac", "-b:a", config.AUDIO_BITRATE, "-ar", "44100", "-ac", "2",
+                "-shortest",
+                "-f", "flv",
+                "-flvflags", "no_duration_filesize",
+                rtmp_url,
+            ]
         return [
             config.FFMPEG, "-hide_banner", "-loglevel", "warning",
             "-re",                      # read at native rate = real-time push
@@ -125,10 +167,10 @@ class _Runner:
         if not stream or not stream["rtmp_key"]:
             self.last_error = "No RTMP key set"
             return False
-        # Validate there is at least one ready video before spawning a thread.
+        # Validate there is at least one ready file before spawning a thread.
         pl, play_order, block_total = self._build_playlist()
         if pl is None:
-            self.last_error = "No ready videos in queue"
+            # _build_playlist already set a specific last_error message.
             return False
         self.playlist_path, self._block_videos, self._block_total = pl, play_order, block_total
         self._stop.clear()

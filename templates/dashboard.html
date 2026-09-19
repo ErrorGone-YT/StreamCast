@@ -79,7 +79,8 @@
 
     <div class="stream-meta">
       <span>
-        {{ s.video_count }} video{{ '' if s.video_count == 1 else 's' }}
+        {{ s.video_count }} {{ 'track' if s.stream_type == 'music' else 'video' }}{{ '' if s.video_count == 1 else 's' }}
+        {% if s.stream_type == 'music' %}· 🎵 music{% endif %}
       </span>
 
       {% if s.youtube_url %}

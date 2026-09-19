@@ -1,6 +1,22 @@
 {% extends "base.html" %}
 {% block title %}{{ 'New stream' if not stream else 'Edit ' + stream.name }} — StreamCast{% endblock %}
 {% block body %}
+<style>
+  .type-picker { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  @media (max-width: 560px) { .type-picker { grid-template-columns:1fr; } }
+  .type-option {
+    display:flex; flex-direction:column; gap:4px;
+    border:1px solid rgba(128,128,128,.35); border-radius:10px;
+    padding:12px 14px; cursor:pointer;
+  }
+  .type-option:has(input:checked) {
+    border-color: var(--primary, #007bff);
+    box-shadow: 0 0 0 1px var(--primary, #007bff) inset;
+  }
+  .type-option input { margin:0 6px 0 0; vertical-align:-2px; }
+  .type-title { font-weight:600; }
+  .type-desc { font-size:12px; color:var(--text-muted, #888); }
+</style>
 <div class="page-head">
   <div>
     <h1>{{ 'New stream' if not stream else 'Edit stream' }}</h1>
@@ -15,6 +31,30 @@
       <label for="name">Stream name</label>
       <input type="text" id="name" name="name" value="{{ stream.name if stream else '' }}" placeholder="e.g. Lo-fi radio 24/7" required>
     </div>
+    {% if not stream %}
+    <div class="field">
+      <label>Stream type</label>
+      <div class="type-picker">
+        <label class="type-option">
+          <span class="type-title"><input type="radio" name="stream_type" value="video" checked>🎬 Video stream</span>
+          <span class="type-desc">Random or sequential playback of video files</span>
+        </label>
+        <label class="type-option">
+          <span class="type-title"><input type="radio" name="stream_type" value="music">🎵 Music stream</span>
+          <span class="type-desc">Loop one video as the visual, play an audio playlist over it</span>
+        </label>
+      </div>
+      <p class="hint">Video: uploaded videos play back-to-back in queue order. Music: one video file loops as the background while audio tracks play from your list (random or sequential). The type can't be changed later.</p>
+    </div>
+    {% else %}
+    <div class="field">
+      <label>Stream type</label>
+      <p class="hint" style="margin:0">
+        {% if stream.stream_type == 'music' %}🎵 Music stream — one looping video with an audio playlist{% else %}🎬 Video stream{% endif %}
+        <span class="muted">(can't be changed)</span>
+      </p>
+    </div>
+    {% endif %}
     <div class="field">
       <label for="rtmp_key">YouTube stream key</label>
       <input type="text" id="rtmp_key" name="rtmp_key" value="{{ stream.rtmp_key if stream else '' }}" placeholder="xxxx-xxxx-xxxx-xxxx" class="mono">

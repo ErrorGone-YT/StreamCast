@@ -50,6 +50,10 @@ MAX_FPS = int(_env("STREAMCAST_MAX_FPS", "60"))
 MAX_UPLOAD_MB = int(_env("STREAMCAST_MAX_UPLOAD_MB", "8192"))  # 8 GB
 ALLOWED_EXT = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv", ".m4v"}
 
+# Audio formats accepted for music streams. Tracks are normalized to MP3 so
+# the concat playlist plays them back-to-back without glitches.
+ALLOWED_AUDIO_EXT = {".mp3", ".wav", ".flac", ".ogg", ".oga", ".m4a", ".aac", ".opus", ".wma"}
+
 # When a stream is live, queue edits are picked up at the end of the current
 # playback block. Short queues are repeated inside one block up to this many
 # seconds so we don't reconnect to YouTube too often. Lower = faster pickup of

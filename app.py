@@ -74,10 +74,14 @@ def dashboard():
 def stream_create():
     if request.method == "POST":
         name = request.form.get("name", "").strip() or "Untitled stream"
+        stream_type = request.form.get("stream_type", "video")
+        if stream_type not in ("video", "music"):
+            stream_type = "video"
         sid = db.create_stream(
             name,
             rtmp_key=request.form.get("rtmp_key", "").strip(),
             youtube_url=request.form.get("youtube_url", "").strip(),
+            stream_type=stream_type,
         )
         return redirect(url_for("stream_detail", stream_id=sid))
     return render_template("stream_edit.html", stream=None)
@@ -180,24 +184,47 @@ def _remove_video_files(video):
 @app.route("/upload/<int:stream_id>", methods=["POST"])
 @login_required
 def upload(stream_id):
-    if not db.get_stream(stream_id):
+    stream = db.get_stream(stream_id)
+    if not stream:
         abort(404)
+    is_music = stream["stream_type"] == "music"
     files = request.files.getlist("video")
     added = 0
     for f in files:
         if not f or not f.filename:
             continue
         ext = Path(f.filename).suffix.lower()
-        if ext not in config.ALLOWED_EXT:
+        if ext in config.ALLOWED_EXT:
+            kind = "video"
+        elif is_music and ext in config.ALLOWED_AUDIO_EXT:
+            kind = "audio"
+        else:
             flash(f"{f.filename}: unsupported type", "error")
             continue
         stored = f"{uuid.uuid4().hex}{ext}"
         f.save(config.UPLOAD_DIR / stored)
-        db.add_video(stream_id, f.filename, stored)
+        db.add_video(stream_id, f.filename, stored, kind=kind)
         added += 1
     if added:
-        flash(f"{added} video(s) queued for encoding", "ok")
+        flash(f"{added} file(s) queued for encoding", "ok")
     return redirect(url_for("stream_detail", stream_id=stream_id))
+
+
+@app.route("/video/set_loop/<int:video_id>", methods=["POST"])
+@login_required
+def video_set_loop(video_id):
+    """Music streams: pick which uploaded video loops as the visual background."""
+    video = db.get_video(video_id)
+    if not video:
+        abort(404)
+    kind = video["kind"] if "kind" in video.keys() else "video"
+    if kind == "audio" or video["status"] != "completed":
+        flash("Only an encoded video can be set as the loop background", "error")
+        return redirect(url_for("stream_detail", stream_id=video["stream_id"]))
+    db.update_stream(video["stream_id"], loop_video_id=video_id)
+    manager.apply_now(video["stream_id"])  # takes effect immediately when live
+    flash("Loop background video updated", "ok")
+    return redirect(url_for("stream_detail", stream_id=video["stream_id"]))
 
 
 @app.route("/video/delete/<int:video_id>", methods=["POST"])
@@ -214,6 +241,11 @@ def video_delete(video_id):
             time.sleep(0.2)
         except (ProcessLookupError, OSError):
             pass
+
+    # Clear the music stream's background if its loop video is being deleted.
+    stream = db.get_stream(video["stream_id"])
+    if stream and "loop_video_id" in stream.keys() and stream["loop_video_id"] == video_id:
+        db.update_stream(video["stream_id"], loop_video_id=None)
 
     _remove_video_files(video)
     db.delete_video(video_id)
