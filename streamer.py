@@ -47,7 +47,9 @@ class _Runner:
         self.playlist_path = None
         self.loop_video_path = None     # music mode: video looped as the background
         self._mix_video_audio = False   # music mode: mix the background's own sound
-        self._video_volume = 0.5        # music mode: background sound level (0..1)
+        self._video_volume = 0.5        # music mode: background sound level (0..2)
+        self._music_volume = 1.0        # music mode: playlist audio level (0..2)
+        self._stream_volume = 1.0       # video mode: playback audio level (0..2)
         self._stop = threading.Event()
         self._reload = threading.Event()   # set to force an immediate block restart
         self._thread = None
@@ -102,10 +104,15 @@ class _Runner:
             self._mix_video_audio = bool(
                 stream["mix_video_audio"] if "mix_video_audio" in stream.keys() else False
             )
-            self._video_volume = float(
+            self._video_volume = min(2.0, max(0.0, float(
                 stream["video_volume"] if "video_volume" in stream.keys() and
                 stream["video_volume"] is not None else 0.5
-            )
+            )))
+            self._music_volume = min(2.0, max(0.0, float(
+                stream["music_volume"] if "music_volume" in stream.keys() and
+                stream["music_volume"] is not None else 1.0
+            )))
+            self._stream_volume = 1.0
             if self._mix_video_audio and not _has_audio_stream(self.loop_video_path):
                 # Background has no sound to mix — fall back to playlist-only audio.
                 self._mix_video_audio = False
@@ -115,6 +122,12 @@ class _Runner:
                 self.last_error = "No ready videos in queue"
                 return None, [], 0.0
             self.loop_video_path = None
+            self._mix_video_audio = False
+            self._music_volume = 1.0
+            self._stream_volume = min(2.0, max(0.0, float(
+                stream["stream_volume"] if "stream_volume" in stream.keys() and
+                stream["stream_volume"] is not None else 1.0
+            )))
 
         one_pass = sum((v["duration"] or 0) for v in videos_base)
         repeats = 1
@@ -157,13 +170,13 @@ class _Runner:
 
     def _ffmpeg_cmd(self, stream):
         rtmp_url = f"{config.RTMP_BASE}/{stream['rtmp_key']}"
+        limiter = "alimiter=limit=0.98:level=false"  # keep boosts from clipping
         if self.loop_video_path is not None:
             # Music stream: one video loops forever as the visual, its audio is
             # replaced (or mixed, see below) with the block's audio playlist.
             # -shortest ends the block when the playlist finishes, same block
             # cycle as video streams.
             if self._mix_video_audio:
-                vol = max(0.0, min(1.0, self._video_volume))
                 return [
                     config.FFMPEG, "-hide_banner", "-loglevel", "warning",
                     "-stream_loop", "-1", "-re",  # loop the background video forever
@@ -171,14 +184,14 @@ class _Runner:
                     "-f", "concat", "-safe", "0", "-re",
                     "-i", str(self.playlist_path),
                     "-filter_complex",
-                    # Background sound at video_volume under the playlist at 100%.
-                    # normalize=0 keeps our explicit levels; duration=shortest ends
-                    # the mix with the playlist (the looped background never ends).
+                    # Independent gain per source; normalize=0 keeps our explicit
+                    # levels; duration=shortest ends the mix with the playlist (the
+                    # looped background never ends). The limiter catches sums > 1.
                     "[0:a]aformat=sample_rates=44100:channel_layouts=stereo,"
-                    f"volume={vol}[bg];"
+                    f"volume={self._video_volume:.2f}[bg];"
                     "[1:a]aformat=sample_rates=44100:channel_layouts=stereo,"
-                    "volume=1.0[pl];"
-                    "[bg][pl]amix=inputs=2:duration=shortest:normalize=0[mix]",
+                    f"volume={self._music_volume:.2f}[pl];"
+                    f"[bg][pl]amix=inputs=2:duration=shortest:normalize=0,{limiter}[mix]",
                     "-map", "0:v:0", "-map", "[mix]",
                     "-c:v", "copy",           # background video is pre-normalized
                     "-c:a", "aac", "-b:a", config.AUDIO_BITRATE, "-ar", "44100", "-ac", "2",
@@ -187,7 +200,7 @@ class _Runner:
                     "-flvflags", "no_duration_filesize",
                     rtmp_url,
                 ]
-            return [
+            cmd = [
                 config.FFMPEG, "-hide_banner", "-loglevel", "warning",
                 "-stream_loop", "-1", "-re",  # loop the background video forever
                 "-i", str(self.loop_video_path),
@@ -195,22 +208,34 @@ class _Runner:
                 "-i", str(self.playlist_path),
                 "-map", "0:v:0", "-map", "1:a:0",
                 "-c:v", "copy",           # background video is pre-normalized
-                "-c:a", "aac", "-b:a", config.AUDIO_BITRATE, "-ar", "44100", "-ac", "2",
-                "-shortest",
-                "-f", "flv",
-                "-flvflags", "no_duration_filesize",
-                rtmp_url,
             ]
-        return [
+            if abs(self._music_volume - 1.0) > 1e-6:
+                # Playlist gain requires re-encoding its audio.
+                cmd += [
+                    "-filter:a", f"volume={self._music_volume:.2f},{limiter}",
+                    "-c:a", "aac", "-b:a", config.AUDIO_BITRATE, "-ar", "44100", "-ac", "2",
+                ]
+            else:
+                cmd += ["-c:a", "aac", "-b:a", config.AUDIO_BITRATE, "-ar", "44100", "-ac", "2"]
+            cmd += ["-shortest", "-f", "flv", "-flvflags", "no_duration_filesize", rtmp_url]
+            return cmd
+        cmd = [
             config.FFMPEG, "-hide_banner", "-loglevel", "warning",
             "-re",                      # read at native rate = real-time push
             "-f", "concat", "-safe", "0",
             "-i", str(self.playlist_path),
-            "-c", "copy",               # no re-encode: clips are pre-normalized
-            "-f", "flv",
-            "-flvflags", "no_duration_filesize",
-            rtmp_url,
         ]
+        if abs(self._stream_volume - 1.0) > 1e-6:
+            # Playback gain: video stays a stream copy, only audio re-encodes.
+            cmd += [
+                "-c:v", "copy",
+                "-filter:a", f"volume={self._stream_volume:.2f},{limiter}",
+                "-c:a", "aac", "-b:a", config.AUDIO_BITRATE, "-ar", "44100", "-ac", "2",
+            ]
+        else:
+            cmd += ["-c", "copy"]       # no re-encode: clips are pre-normalized
+        cmd += ["-f", "flv", "-flvflags", "no_duration_filesize", rtmp_url]
+        return cmd
 
     # -- lifecycle -----------------------------------------------------------
     def start(self):

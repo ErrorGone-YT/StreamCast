@@ -296,11 +296,29 @@ def stream_mix(stream_id):
         enabled = bool(data.get('enabled', False))
         fields = {'mix_video_audio': 1 if enabled else 0}
         if 'volume' in data:
-            vol = max(0, min(100, int(data['volume'])))
+            vol = max(0, min(200, int(data['volume'])))
             fields['video_volume'] = vol / 100.0
         db.update_stream(stream_id, **fields)
         manager.apply_now(stream_id)
         return jsonify({'status': 'ok', 'enabled': enabled})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/stream_volume/<int:stream_id>', methods=['POST'])
+@login_required
+def stream_volume(stream_id):
+    """Playback loudness: video-stream audio or the music playlist (0..200%)."""
+    try:
+        data = request.get_json() or {}
+        vol = max(0, min(200, int(data.get('volume', 100))))
+        stream = db.get_stream(stream_id)
+        if not stream:
+            return jsonify({'status': 'error', 'message': 'Stream not found'}), 404
+        field = 'music_volume' if stream["stream_type"] == "music" else 'stream_volume'
+        db.update_stream(stream_id, **{field: vol / 100.0})
+        manager.apply_now(stream_id)
+        return jsonify({'status': 'ok', 'volume': vol})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 

@@ -25,7 +25,9 @@ CREATE TABLE IF NOT EXISTS streams (
     stream_type   TEXT DEFAULT 'video',   -- 'video' | 'music'
     loop_video_id INTEGER,                -- music: video row looped as the background
     mix_video_audio INTEGER DEFAULT 0,    -- music: mix the background video's own sound
-    video_volume  REAL DEFAULT 0.5        -- music: background video sound level (0..1)
+    video_volume  REAL DEFAULT 0.5,       -- music: background video sound level (0..2)
+    music_volume  REAL DEFAULT 1.0,       -- music: playlist audio level (0..2)
+    stream_volume REAL DEFAULT 1.0        -- video: playback audio level (0..2)
 );
 
 CREATE TABLE IF NOT EXISTS videos (
@@ -94,6 +96,14 @@ def migrate_db():
         except sqlite3.OperationalError:
             pass
         try:
+            db.execute("ALTER TABLE streams ADD COLUMN music_volume REAL DEFAULT 1.0")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            db.execute("ALTER TABLE streams ADD COLUMN stream_volume REAL DEFAULT 1.0")
+        except sqlite3.OperationalError:
+            pass
+        try:
             db.execute("ALTER TABLE videos ADD COLUMN kind TEXT DEFAULT 'video'")
         except sqlite3.OperationalError:
             pass
@@ -135,10 +145,19 @@ def update_stream(stream_id, **fields):
         return
     cols = ", ".join(f"{k} = ?" for k in fields)
     with get_db() as db:
-        db.execute(
-            f"UPDATE streams SET {cols} WHERE id = ?",
-            (*fields.values(), stream_id),
-        )
+        try:
+            db.execute(
+                f"UPDATE streams SET {cols} WHERE id = ?",
+                (*fields.values(), stream_id),
+            )
+        except sqlite3.OperationalError:
+            # Schema drifted (columns added by a newer version of the code) —
+            # repair in place and retry instead of failing the save silently.
+            migrate_db()
+            db.execute(
+                f"UPDATE streams SET {cols} WHERE id = ?",
+                (*fields.values(), stream_id),
+            )
 
 def delete_stream(stream_id):
     with get_db() as db:

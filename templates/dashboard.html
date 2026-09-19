@@ -96,6 +96,12 @@
         Open
       </a>
 
+      <a href="{{ url_for('stream_edit', stream_id=s.id) }}"
+         class="btn"
+         style="flex:1; text-align:center;">
+        Edit
+      </a>
+
       <form method="POST"
             action="{{ url_for('stream_delete', stream_id=s.id) }}"
             onsubmit="return confirmDelete({{ s.name|tojson|forceescape }});"

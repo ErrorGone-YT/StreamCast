@@ -125,7 +125,7 @@ input:checked + .slider:before {
       <div style="display:flex; justify-content:flex-end; align-items:center; gap:8px; font-size:13px; color:var(--text-muted, #666); margin-top:8px;">
         <span style="font-weight:500;">Random Play</span>
         <label class="switch">
-          <input type="checkbox" id="shuffleToggle">
+          <input type="checkbox" id="shuffleToggle" {{ 'checked' if stream.shuffle else '' }}>
           <span class="slider round"></span>
         </label>
       </div>
@@ -134,7 +134,6 @@ input:checked + .slider:before {
 
 </div>
     <span id="queueHint" class="muted" style="font-size:13px">Drag to reorder — this is the play order</span>
-  </div>
   {% if stream.stream_type == 'music' %}
   <p class="hint" style="margin:-6px 0 16px">
     One video file loops as the visual while audio tracks play over it.
@@ -147,11 +146,23 @@ input:checked + .slider:before {
       <span class="slider round"></span>
     </label>
     <span id="mixVolWrap" style="display:flex; align-items:center; gap:6px; {{ '' if stream.mix_video_audio else 'visibility:hidden;' }}">
-      <input type="range" id="mixVol" min="0" max="100" step="5" value="{{ ((stream.video_volume or 0.5) * 100) | round | int }}" style="width:130px;">
+      <input type="range" id="mixVol" min="0" max="200" step="5" value="{{ ((stream.video_volume or 0.5) * 100) | round | int }}" style="width:110px;">
       <span id="mixVolVal">{{ ((stream.video_volume or 0.5) * 100) | round | int }}%</span>
     </span>
+    <span style="font-weight:500; margin-left:8px;">Music volume</span>
+    <span style="display:flex; align-items:center; gap:6px;">
+      <input type="range" id="musicVol" min="0" max="200" step="5" value="{{ ((stream.music_volume if stream.music_volume is not none else 1.0) * 100) | round | int }}" style="width:110px;">
+      <span id="musicVolVal">{{ ((stream.music_volume if stream.music_volume is not none else 1.0) * 100) | round | int }}%</span>
+    </span>
+  </div>
+  {% else %}
+  <div style="display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin:-6px 0 16px; font-size:13px; color:var(--text-muted, #666);">
+    <span style="font-weight:500;">Audio volume</span>
+    <input type="range" id="streamVol" min="0" max="200" step="5" value="{{ ((stream.stream_volume if stream.stream_volume is not none else 1.0) * 100) | round | int }}" style="width:130px;">
+    <span id="streamVolVal">{{ ((stream.stream_volume if stream.stream_volume is not none else 1.0) * 100) | round | int }}%</span>
   </div>
   {% endif %}
+  <span id="settingsError" style="display:none; color:#d9534f; font-size:12px; margin:-4px 0 12px;"></span>
   {% if status.live %}
   <p class="hint" id="liveEditHint" style="margin:-6px 0 16px">
     Stream is live. Changes to the queue apply automatically at the next block, or hit <b>Apply queue now</b> above to switch immediately.
@@ -208,16 +219,8 @@ input:checked + .slider:before {
 <script>
 
 const streamId = {{ stream.id }};
-(async () => {
-  try {
-    const res = await fetch(`/api/stream_status/${streamId}`);
-    const data = await res.json();
-    if (data && data.shuffle !== undefined) {
-      const toggle = document.getElementById('shuffleToggle');
-      if (toggle) toggle.checked = data.shuffle;
-    }
-  } catch (e) { console.error('Error loading shuffle status', e); }
-})();
+// Initial control states (shuffle, volumes, mix) are rendered server-side —
+// no async init, so nothing flickers or resets when the page reloads.
 
 
 
@@ -381,20 +384,32 @@ if (uploadForm) {
 }
 
 
+// --- Visible feedback when a settings save fails (otherwise silent) ---
+function showSettingsError(msg) {
+  const el = document.getElementById('settingsError');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.display = 'inline';
+  clearTimeout(showSettingsError._t);
+  showSettingsError._t = setTimeout(() => { el.style.display = 'none'; }, 6000);
+}
+
 // --- Shuffle Toggle Handler ---
 const shuffleToggle = document.getElementById('shuffleToggle');
 if (shuffleToggle) {
   shuffleToggle.onchange = async () => {
     const enabled = shuffleToggle.checked;
     try {
-      await fetch(`/api/stream_shuffle/${streamId}`, {
+      const res = await fetch(`/api/stream_shuffle/${streamId}`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ enabled })
       });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
     } catch (e) {
       console.error('Failed to update shuffle status', e);
       shuffleToggle.checked = !enabled;
+      showSettingsError('Failed to save — is the server running the latest code?');
     }
   };
 }
@@ -409,13 +424,15 @@ async function sendMixSettings() {
   const body = { enabled: mixToggle.checked };
   if (mixVol) body.volume = +mixVol.value;
   try {
-    await fetch(`/api/stream_mix/${streamId}`, {
+    const res = await fetch(`/api/stream_mix/${streamId}`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body)
     });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
   } catch (e) {
     console.error('Failed to update video sound settings', e);
+    showSettingsError('Failed to save — is the server running the latest code?');
   }
 }
 
@@ -428,6 +445,35 @@ if (mixToggle && mixVolWrap) {
 if (mixVol && mixVolVal) {
   mixVol.oninput = () => { mixVolVal.textContent = mixVol.value + '%'; };
   mixVol.onchange = sendMixSettings;  // send once on release, not per tick
+}
+
+// --- Playback volume sliders (music playlist / video-stream audio) ---
+async function sendVolume(volume) {
+  try {
+    const res = await fetch(`/api/stream_volume/${streamId}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ volume })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+  } catch (e) {
+    console.error('Failed to update volume', e);
+    showSettingsError('Failed to save volume — restart the server so the new API is loaded');
+  }
+}
+
+const musicVol = document.getElementById('musicVol');
+const musicVolVal = document.getElementById('musicVolVal');
+if (musicVol && musicVolVal) {
+  musicVol.oninput = () => { musicVolVal.textContent = musicVol.value + '%'; };
+  musicVol.onchange = () => sendVolume(+musicVol.value);
+}
+
+const streamVol = document.getElementById('streamVol');
+const streamVolVal = document.getElementById('streamVolVal');
+if (streamVol && streamVolVal) {
+  streamVol.oninput = () => { streamVolVal.textContent = streamVol.value + '%'; };
+  streamVol.onchange = () => sendVolume(+streamVol.value);
 }
 // --- Drag to reorder queue ---
 const queue = document.getElementById('queue');
