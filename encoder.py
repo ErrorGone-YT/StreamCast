@@ -89,6 +89,8 @@ def _transcode(video, cmd, out_path, total_duration, src_dims=(None, None), mode
         db.update_video(video["id"], status="error", error_msg=f"encode failed with code {proc.returncode}")
         return
 
+    kind = video["kind"] if "kind" in video.keys() else "video"
+
     try:
         duration, _, _, _ = ffprobe_info(out_path)
     except Exception:
@@ -120,6 +122,22 @@ def _transcode(video, cmd, out_path, total_duration, src_dims=(None, None), mode
                 pass
 
     db.update_video(video["id"], **updates)
+
+    if kind != "audio":
+        _make_thumb(out_path)
+
+
+def _make_thumb(out_path):
+    """Grab a small frame for dashboard tiles (video files only)."""
+    thumb = out_path.parent / (out_path.name + ".jpg")
+    try:
+        subprocess.run(
+            [config.FFMPEG, "-y", "-ss", "1", "-i", str(out_path),
+             "-frames:v", "1", "-vf", "scale=640:-2", str(thumb)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60,
+        )
+    except Exception:
+        pass
 
 
 def _encode_one(video):

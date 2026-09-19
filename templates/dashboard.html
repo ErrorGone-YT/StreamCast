@@ -92,6 +92,18 @@
       </form>
     </div>
 
+    {% if s.yt_id or s.thumb_url %}
+    <div class="tile-thumb">
+      {% if s.yt_id %}
+      <img src="https://i.ytimg.com/vi/{{ s.yt_id }}/hqdefault.jpg" alt="" loading="lazy"
+           onerror="if(!this.dataset.fb){this.dataset.fb=1;this.src='{{ s.thumb_url or '' }}';}else{this.closest('.tile-thumb').classList.add('hide');}">
+      {% else %}
+      <img src="{{ s.thumb_url }}" alt="" loading="lazy"
+           onerror="this.closest('.tile-thumb').classList.add('hide');">
+      {% endif %}
+    </div>
+    {% endif %}
+
     <a href="{{ url_for('stream_detail', stream_id=s.id) }}"
        class="name"
        style="margin-top:12px">

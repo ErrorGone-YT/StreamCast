@@ -1,4 +1,6 @@
 """StreamCast — single-owner 24/7 YouTube streaming panel."""
+import re
+import subprocess
 import time
 import uuid
 from functools import wraps
@@ -6,7 +8,7 @@ from pathlib import Path
 
 from flask import (
     Flask, abort, flash, jsonify, redirect, render_template,
-    request, session, url_for,
+    request, send_file, session, url_for,
 )
 from werkzeug.utils import secure_filename
 
@@ -73,6 +75,66 @@ def _mode_resolution(mode):
     """Resolution badge for a quality mode, e.g. 1080p."""
     preset = config.QUALITY_MODES.get(mode or "balanced", config.QUALITY_MODES["balanced"])
     return _res_label(preset["width"], preset["height"])
+
+
+def _youtube_id(url):
+    """Video ID from common YouTube link shapes, or None."""
+    if not url:
+        return None
+    m = re.search(r"(?:youtu\.be/|watch\?v=|/live/|/shorts/|/embed/)([\w-]{11})", url)
+    return m.group(1) if m else None
+
+
+def _thumb_path(encoded_name):
+    """Thumbnail sits next to the encoded file: xxx.mp4 -> xxx.mp4.jpg."""
+    return config.ENCODED_DIR / (encoded_name + ".jpg")
+
+
+def _ensure_thumb(video):
+    """Grab a frame from an encoded video if its thumbnail doesn't exist yet."""
+    if not video["encoded_name"] or video["kind"] == "audio":
+        return
+    thumb = _thumb_path(video["encoded_name"])
+    if thumb.exists():
+        return
+    src = config.ENCODED_DIR / video["encoded_name"]
+    if not src.exists():
+        return
+    try:
+        subprocess.run(
+            [config.FFMPEG, "-y", "-ss", "1", "-i", str(src),
+             "-frames:v", "1", "-vf", "scale=640:-2", str(thumb)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30,
+        )
+    except Exception:
+        pass
+
+
+def _stream_thumb_url(stream):
+    """Local frame URL representing a stream on the dashboard tile, or None.
+
+    Music streams are represented by their loop background video; video
+    streams by the first ready video in the queue.
+    """
+    videos = db.list_videos(stream["id"])
+    loop_id = stream["loop_video_id"] if "loop_video_id" in stream.keys() else None
+    pick = None
+    if loop_id:
+        pick = next(
+            (v for v in videos
+             if v["id"] == loop_id and v["kind"] != "audio" and v["encoded_name"]),
+            None,
+        )
+    if pick is None:
+        pick = next(
+            (v for v in videos
+             if v["kind"] != "audio" and v["status"] == "completed" and v["encoded_name"]),
+            None,
+        )
+    if pick is None:
+        return None
+    _ensure_thumb(pick)
+    return url_for("video_thumb", video_id=pick["id"])
 
 
 def _hydrate_media_meta(v):
@@ -167,6 +229,8 @@ def dashboard():
         s["size_label"] = _fmt_size(s["total_size"])
         s["resolution"] = _mode_resolution(s["quality_mode"])
         s["uptime"] = manager.uptime(s["id"]) if s["live"] else None
+        s["yt_id"] = _youtube_id(s["youtube_url"])
+        s["thumb_url"] = _stream_thumb_url(s)
     return render_template("dashboard.html", streams=streams)
 
 
@@ -327,6 +391,7 @@ def _remove_video_files(video):
         (config.UPLOAD_DIR / video["stored_name"]).unlink(missing_ok=True)
     if video["encoded_name"]:
         (config.ENCODED_DIR / video["encoded_name"]).unlink(missing_ok=True)
+        _thumb_path(video["encoded_name"]).unlink(missing_ok=True)
 
 
 @app.route("/upload/<int:stream_id>", methods=["POST"])
@@ -417,6 +482,20 @@ def api_video_statuses(stream_id):
         })
     return jsonify(videos)
 
+
+
+@app.route("/thumb/<int:video_id>")
+def video_thumb(video_id):
+    """Tile thumbnail: a frame grabbed from the encoded video."""
+    video = db.get_video(video_id)
+    if not video or not video["encoded_name"] or video["kind"] == "audio":
+        abort(404)
+    thumb = _thumb_path(video["encoded_name"])
+    if not thumb.exists():
+        _ensure_thumb(video)
+        if not thumb.exists():
+            abort(404)
+    return send_file(thumb, mimetype="image/jpeg", max_age=3600)
 
 
 @app.route('/api/stream_status/<int:stream_id>')
