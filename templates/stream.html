@@ -1,3 +1,46 @@
+<style>
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 34px;
+  height: 20px;
+}
+.switch input { 
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #ccc;
+  transition: .4s;
+  border-radius: 34px;
+}
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: .4s;
+  border-radius: 50%;
+}
+input:checked + .slider {
+  background-color: var(--primary, #007bff);
+}
+input:checked + .slider:before {
+  transform: translateX(14px);
+}
+
+</style>
 {% extends "base.html" %}
 {% block title %}{{ stream.name }} — StreamCast{% endblock %}
 {% block body %}
@@ -9,6 +52,8 @@
     <h1>{{ stream.name }}</h1>
     <div class="row" style="margin-top:8px">
       <span id="livePill" class="pill {{ 'pill-live' if status.live else 'pill-off' }}">
+    
+
         <span class="pdot"></span><span id="liveText">{{ 'LIVE' if status.live else 'OFFLINE' }}</span>
       </span>
       {% if stream.youtube_url %}<a href="{{ stream.youtube_url }}" target="_blank">Watch on YouTube ↗</a>{% endif %}
@@ -67,8 +112,21 @@
 <!-- Queue -->
 <div class="card">
   <div class="row" style="margin-bottom:16px">
-    <h2 style="margin:0">Video queue</h2>
+    
+    <div style="margin-bottom:15px;">
+      <h2 style="margin:0">Video queue</h2>
     <span class="spacer"></span>
+      <div style="display:flex; justify-content:flex-end; align-items:center; gap:8px; font-size:13px; color:var(--text-muted, #666); margin-top:8px;">
+        <span style="font-weight:500;">Random Play</span>
+        <label class="switch">
+          <input type="checkbox" id="shuffleToggle">
+          <span class="slider round"></span>
+        </label>
+      </div>
+    </div>
+
+    
+</div>
     <span id="queueHint" class="muted" style="font-size:13px">Drag to reorder — this is the play order</span>
   </div>
   {% if status.live %}
