@@ -53,6 +53,25 @@ CREATE TABLE IF NOT EXISTS videos (
     created_at    REAL NOT NULL,
     FOREIGN KEY (stream_id) REFERENCES streams(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    note          TEXT DEFAULT '',           -- who this password belongs to
+    role          TEXT DEFAULT 'worker',     -- 'admin' | 'worker' | 'viewer'
+    password_hash TEXT NOT NULL,
+    created_at    REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS stream_access (
+    user_id   INTEGER NOT NULL,
+    stream_id INTEGER NOT NULL,
+    PRIMARY KEY (user_id, stream_id)
+);
 """
 
 def _connect():
@@ -142,6 +161,10 @@ def migrate_db():
             db.execute("ALTER TABLE videos ADD COLUMN size REAL")
         except sqlite3.OperationalError:
             pass
+        try:
+            db.execute("ALTER TABLE streams ADD COLUMN owner_id INTEGER")
+        except sqlite3.OperationalError:
+            pass
 
 def init_db():
     config.ensure_dirs()
@@ -150,12 +173,13 @@ def init_db():
         migrate_db()
 
 # --- Streams ----------------------------------------------------------------
-def create_stream(name, rtmp_key="", youtube_url="", stream_type="video", quality_mode="balanced"):
+def create_stream(name, rtmp_key="", youtube_url="", stream_type="video",
+                  quality_mode="balanced", owner_id=None):
     with get_db() as db:
         cur = db.execute(
-            "INSERT INTO streams (name, rtmp_key, youtube_url, stream_type, quality_mode, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (name, rtmp_key, youtube_url, stream_type, quality_mode, time.time()),
+            "INSERT INTO streams (name, rtmp_key, youtube_url, stream_type, quality_mode, owner_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name, rtmp_key, youtube_url, stream_type, quality_mode, owner_id, time.time()),
         )
         return cur.lastrowid
 
@@ -208,6 +232,7 @@ def update_stream(stream_id, **fields):
 def delete_stream(stream_id):
     with get_db() as db:
         db.execute("DELETE FROM streams WHERE id = ?", (stream_id,))
+        db.execute("DELETE FROM stream_access WHERE stream_id = ?", (stream_id,))
 
 def set_live(stream_id, is_live, pid=None):
     update_stream(stream_id, is_live=1 if is_live else 0, pid=pid)
@@ -290,3 +315,71 @@ def next_encode_job():
             "SELECT * FROM videos WHERE status = 'waiting_encode' "
             "ORDER BY created_at LIMIT 1"
         ).fetchone()
+# --- Users (worker accounts) -------------------------------------------------
+def create_user(note, role, password_hash):
+    with get_db() as db:
+        cur = db.execute(
+            "INSERT INTO users (note, role, password_hash, created_at) VALUES (?, ?, ?, ?)",
+            (note, role, password_hash, time.time()),
+        )
+        return cur.lastrowid
+
+def list_users():
+    with get_db() as db:
+        return db.execute("SELECT * FROM users ORDER BY created_at ASC").fetchall()
+
+def get_user(user_id):
+    with get_db() as db:
+        return db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+
+def update_user_password(user_id, password_hash):
+    with get_db() as db:
+        db.execute("UPDATE users SET password_hash = ? WHERE id = ?",
+                   (password_hash, user_id))
+
+def update_user(user_id, note=None, role=None):
+    with get_db() as db:
+        if note is not None:
+            db.execute("UPDATE users SET note = ? WHERE id = ?", (note, user_id))
+        if role is not None:
+            db.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+
+def delete_user(user_id):
+    with get_db() as db:
+        db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+
+def find_user_by_password(password, check_hash):
+    """Password-only login: try the password against every account hash."""
+    for u in list_users():
+        if check_hash(u["password_hash"], password):
+            return u
+    return None
+
+# --- Settings (key-value) ----------------------------------------------------
+def get_setting(key, default=None):
+    with get_db() as db:
+        row = db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else default
+
+def set_setting(key, value):
+    with get_db() as db:
+        db.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+
+# --- Shared stream access (admin grants workers extra streams) ---------------
+def list_shared_stream_ids(user_id):
+    with get_db() as db:
+        return [r["stream_id"] for r in db.execute(
+            "SELECT stream_id FROM stream_access WHERE user_id = ?", (user_id,))]
+
+def set_shared_streams(user_id, stream_ids):
+    with get_db() as db:
+        db.execute("DELETE FROM stream_access WHERE user_id = ?", (user_id,))
+        for sid in stream_ids:
+            db.execute(
+                "INSERT OR IGNORE INTO stream_access (user_id, stream_id) VALUES (?, ?)",
+                (user_id, int(sid)),
+            )

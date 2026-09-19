@@ -81,6 +81,7 @@
       {% endif %}
 
       <!-- iOS-style live switch: right = on air, left = offline -->
+      {% if s.can_manage %}
       <form method="POST"
             action="{{ url_for('stream_stop' if s.live else 'stream_start', stream_id=s.id, next='dashboard') }}"
             style="margin:0; display:flex;">
@@ -90,6 +91,7 @@
                 aria-checked="{{ 'true' if s.live else 'false' }}"
                 title="{{ 'Stop streaming' if s.live else 'Go live' }}"></button>
       </form>
+      {% endif %}
     </div>
 
     {% if s.yt_id or s.thumb_url %}
@@ -137,6 +139,7 @@
         Edit
       </a>
 
+      {% if s.can_manage %}
       <form method="POST"
             action="{{ url_for('stream_delete', stream_id=s.id) }}"
             onsubmit="return confirmDelete({{ s.name|tojson|forceescape }});"
@@ -148,6 +151,7 @@
           Delete
         </button>
       </form>
+      {% endif %}
 
     </div>
 

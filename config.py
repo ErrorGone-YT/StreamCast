@@ -14,8 +14,26 @@ def _env(name, default=None):
     return val if val not in (None, "") else default
 
 
-# --- Paths ------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
+
+
+def _load_dotenv():
+    """Tiny .env loader so the panel behaves the same everywhere (VS Code,
+    plain terminal, systemd). KEY=VALUE lines, '#' comments, quotes stripped.
+    Real environment variables always win over .env values."""
+    env_file = BASE_DIR / ".env"
+    if not env_file.exists():
+        return
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
+
+
+_load_dotenv()
+
 STORAGE_DIR = Path(_env("STREAMCAST_STORAGE", str(BASE_DIR / "storage")))
 UPLOAD_DIR = STORAGE_DIR / "uploads"      # raw user uploads
 ENCODED_DIR = STORAGE_DIR / "encoded"     # normalized, ready-to-stream files

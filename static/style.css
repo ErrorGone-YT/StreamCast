@@ -552,3 +552,17 @@ html[data-theme="dark"] .toast-error { background: rgba(255,77,100,.12); color: 
   object-fit: cover;
   display: block;
 }
+
+/* Admin panel inputs (role / note / password fields) */
+.admin-input {
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  caret-color: var(--text);
+  font: inherit;
+  outline: none;
+  min-width: 0;
+}
+.admin-input:focus { border-color: var(--accent); }

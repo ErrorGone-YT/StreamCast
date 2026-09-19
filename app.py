@@ -1,5 +1,6 @@
 """StreamCast — single-owner 24/7 YouTube streaming panel."""
 import re
+import secrets
 import subprocess
 import time
 import uuid
@@ -7,9 +8,10 @@ from functools import wraps
 from pathlib import Path
 
 from flask import (
-    Flask, abort, flash, jsonify, redirect, render_template,
+    Flask, abort, flash, g, jsonify, redirect, render_template,
     request, send_file, session, url_for,
 )
+from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
 import os
@@ -183,29 +185,120 @@ def _fmt_hms(seconds):
 app.jinja_env.filters["hms"] = _fmt_hms
 
 
-# --- Auth -------------------------------------------------------------------
+# --- Auth & roles ------------------------------------------------------------
+# The master password (env or a DB-stored override) is the owner/admin. Extra
+# accounts live in the `users` table, passwordless-login style:
+#   admin  — full rights (created in the admin panel, rarely needed)
+#   worker — can create streams and manage only the ones they created
+#   viewer — read-only
+# With REQUIRE_LOGIN=0 anonymous visitors act as the admin everywhere, except
+# the /admin panel itself, which always asks for an explicit master login.
+ROLES = ("admin", "worker", "viewer")
+
+
+def _check_master_password(password):
+    stored = db.get_setting("master_password_hash")
+    if stored:
+        return check_password_hash(stored, password)
+    return password == config.OWNER_PASSWORD
+
+
+def current_user():
+    """(user_id, role) for this request, or (None, None) when locked out."""
+    if getattr(g, "_user_resolved", False):
+        return g._user_id, g._user_role
+    uid = role = None
+    if session.get("authed"):
+        uid = session.get("user_id")
+        role = session.get("role", "viewer")
+        if uid is not None and not db.get_user(uid):
+            # Account deleted while the session was alive — treat as logged out.
+            uid = role = None
+    elif not config.REQUIRE_LOGIN:
+        # Open access = read-only: anonymous visitors can look around,
+        # but everything that mutates needs a signed-in account.
+        role = "viewer"
+    g._user_resolved = True
+    g._user_id, g._user_role = uid, role
+    return uid, role
+
+
+def current_role():
+    return current_user()[1]
+
+
 def login_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
-        # Password disabled -> open access (no login screen).
-        if not config.REQUIRE_LOGIN:
-            return view(*args, **kwargs)
-        if not session.get("authed"):
+        if current_role() is None:
             return redirect(url_for("login", next=request.path))
         return view(*args, **kwargs)
     return wrapped
 
 
+def admin_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not (session.get("authed") and session.get("role") == "admin"):
+            return redirect(url_for("login", next=request.path))
+        return view(*args, **kwargs)
+    return wrapped
+
+
+def _owns_stream(stream):
+    """May the current user edit / delete / run this stream?"""
+    uid, role = current_user()
+    if role == "admin":
+        return True
+    if role != "worker" or uid is None:
+        return False
+    if stream["owner_id"] == uid:
+        return True
+    shared = getattr(g, "_shared_ids", None)
+    if shared is None:
+        shared = set(db.list_shared_stream_ids(uid))
+        g._shared_ids = shared
+    return stream["id"] in shared
+
+
+def _owned_stream(stream_id):
+    """Fetch a stream for a mutating action; 403 unless admin or the owner."""
+    stream = db.get_stream(stream_id)
+    if not stream:
+        abort(404)
+    if current_role() == "viewer" or not _owns_stream(stream):
+        abort(403)
+    return stream
+
+
+@app.context_processor
+def _inject_user():
+    uid, role = current_user()
+    return {"u_id": uid, "u_role": role}
+
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    if not config.REQUIRE_LOGIN:
+    if session.get("authed"):
         return redirect(url_for("dashboard"))
+    nxt = request.args.get("next") or url_for("dashboard")
+    if not nxt.startswith("/"):
+        nxt = url_for("dashboard")
     if request.method == "POST":
-        if request.form.get("password") == config.OWNER_PASSWORD:
+        pw = request.form.get("password", "")
+        if _check_master_password(pw):
             session["authed"] = True
+            session["user_id"] = None
+            session["role"] = "admin"
             session.permanent = True
-            return redirect(request.args.get("next") or url_for("dashboard"))
+            return redirect(nxt)
+        user = db.find_user_by_password(pw, check_password_hash)
+        if user:
+            session["authed"] = True
+            session["user_id"] = user["id"]
+            session["role"] = user["role"]
+            session.permanent = True
+            return redirect(nxt)
         flash("Wrong password", "error")
     return render_template("login.html")
 
@@ -214,6 +307,108 @@ def login():
 def logout():
     session.clear()
     return redirect(url_for("login"))
+
+
+# --- Own account -------------------------------------------------------------
+@app.route("/password", methods=["GET", "POST"])
+@login_required
+def change_password():
+    uid, _ = current_user()
+    if request.method == "POST":
+        cur = request.form.get("current", "")
+        new = request.form.get("new", "")
+        confirm = request.form.get("confirm", "")
+        if len(new) < 6:
+            flash("New password must be at least 6 characters", "error")
+        elif new != confirm:
+            flash("New passwords do not match", "error")
+        elif uid is None:
+            # Master password (DB override; env fallback keeps working until set).
+            if not _check_master_password(cur):
+                flash("Current password is wrong", "error")
+            else:
+                db.set_setting("master_password_hash", generate_password_hash(new))
+                flash("Master password updated", "ok")
+                return redirect(url_for("dashboard"))
+        else:
+            u = db.get_user(uid)
+            if not u or not check_password_hash(u["password_hash"], cur):
+                flash("Current password is wrong", "error")
+            else:
+                db.update_user_password(uid, generate_password_hash(new))
+                flash("Password updated", "ok")
+                return redirect(url_for("dashboard"))
+    return render_template("password.html")
+
+
+# --- Admin panel -------------------------------------------------------------
+def _gen_password():
+    return secrets.token_urlsafe(9)  # ~12 chars, URL-safe, no lookalikes trimmed
+
+
+@app.route("/admin")
+@admin_required
+def admin_panel():
+    users = db.list_users()
+    created = session.pop("created_password", None)
+    streams = db.list_streams()
+    shared = {u["id"]: set(db.list_shared_stream_ids(u["id"])) for u in users}
+    return render_template("admin.html", users=users, created=created,
+                           roles=ROLES, streams=streams, shared=shared)
+
+
+@app.route("/admin/users", methods=["POST"])
+@admin_required
+def admin_create_user():
+    note = request.form.get("note", "").strip()
+    role = request.form.get("role", "worker")
+    if role not in ROLES:
+        role = "worker"
+    password = _gen_password()
+    db.create_user(note, role, generate_password_hash(password))
+    # The plaintext password is shown once, right after creation.
+    session["created_password"] = {"password": password, "note": note, "role": role}
+    return redirect(url_for("admin_panel"))
+
+
+@app.route("/admin/users/<int:user_id>", methods=["POST"])
+@admin_required
+def admin_update_user(user_id):
+    if not db.get_user(user_id):
+        abort(404)
+    role = request.form.get("role")
+    db.update_user(user_id,
+                   note=request.form.get("note", ""),
+                   role=role if role in ROLES else None)
+    # Shared streams (worker extra access); harmless for other roles.
+    try:
+        shared_ids = [int(x) for x in request.form.getlist("shared")]
+    except ValueError:
+        shared_ids = []
+    db.set_shared_streams(user_id, shared_ids)
+    flash("Account updated", "ok")
+    return redirect(url_for("admin_panel"))
+
+
+@app.route("/admin/users/<int:user_id>/regenerate", methods=["POST"])
+@admin_required
+def admin_regenerate_user(user_id):
+    user = db.get_user(user_id)
+    if not user:
+        abort(404)
+    password = _gen_password()
+    db.update_user_password(user_id, generate_password_hash(password))
+    session["created_password"] = {"password": password, "note": user["note"],
+                                   "role": user["role"], "regenerated": True}
+    return redirect(url_for("admin_panel"))
+
+
+@app.route("/admin/users/<int:user_id>/delete", methods=["POST"])
+@admin_required
+def admin_delete_user(user_id):
+    db.delete_user(user_id)
+    flash("Account removed", "ok")
+    return redirect(url_for("admin_panel"))
 
 
 # --- Dashboard --------------------------------------------------------------
@@ -231,6 +426,7 @@ def dashboard():
         s["uptime"] = manager.uptime(s["id"]) if s["live"] else None
         s["yt_id"] = _youtube_id(s["youtube_url"])
         s["thumb_url"] = _stream_thumb_url(s)
+        s["can_manage"] = _owns_stream(s)
     return render_template("dashboard.html", streams=streams)
 
 
@@ -239,6 +435,8 @@ def dashboard():
 @login_required
 def stream_create():
     if request.method == "POST":
+        if current_role() not in ("admin", "worker"):
+            abort(403)
         name = request.form.get("name", "").strip() or "Untitled stream"
         stream_type = request.form.get("stream_type", "video")
         if stream_type not in ("video", "music"):
@@ -246,12 +444,14 @@ def stream_create():
         quality_mode = request.form.get("quality_mode", "balanced")
         if quality_mode not in config.QUALITY_MODES:
             quality_mode = "balanced"
+        uid, _ = current_user()
         sid = db.create_stream(
             name,
             rtmp_key=request.form.get("rtmp_key", "").strip(),
             youtube_url=request.form.get("youtube_url", "").strip(),
             stream_type=stream_type,
             quality_mode=quality_mode,
+            owner_id=uid,  # None for the master/admin: owned by the panel itself
         )
         return redirect(url_for("stream_detail", stream_id=sid))
     return render_template("stream_edit.html", stream=None, current_mode="balanced")
@@ -277,6 +477,7 @@ def stream_detail(stream_id):
     return render_template(
         "stream.html", stream=stream, videos=videos, status=status,
         totals_label=totals_label, resolution=_mode_resolution(stream["quality_mode"]),
+        can_manage=_owns_stream(stream),
     )
 
 
@@ -286,6 +487,10 @@ def stream_edit(stream_id):
     stream = db.get_stream(stream_id)
     if not stream:
         abort(404)
+    # The edit page itself is manage-only: viewers don't even see the form,
+    # workers only for streams they own or were granted.
+    if not _owns_stream(stream):
+        abort(403)
     if request.method == "POST":
         quality_mode = request.form.get("quality_mode", stream["quality_mode"] or "balanced")
         if quality_mode not in config.QUALITY_MODES:
@@ -318,6 +523,11 @@ def stream_edit(stream_id):
 @app.route("/stream/delete/<int:stream_id>", methods=["POST"])
 @login_required
 def stream_delete(stream_id):
+    stream = db.get_stream(stream_id)
+    if not stream:
+        abort(404)
+    if current_role() == "viewer" or not _owns_stream(stream):
+        abort(403)
     manager.stop_stream(stream_id)
     for v in db.list_videos(stream_id):
         _remove_video_files(v)
@@ -348,6 +558,7 @@ def _post_action_result(stream_id, ok, msg):
 @app.route("/stream/start/<int:stream_id>", methods=["POST"])
 @login_required
 def stream_start(stream_id):
+    _owned_stream(stream_id)
     ok, msg = manager.start_stream(stream_id)
     return _post_action_result(stream_id, ok, msg)
 
@@ -355,6 +566,7 @@ def stream_start(stream_id):
 @app.route("/stream/stop/<int:stream_id>", methods=["POST"])
 @login_required
 def stream_stop(stream_id):
+    _owned_stream(stream_id)
     ok, msg = manager.stop_stream(stream_id)
     return _post_action_result(stream_id, ok, msg)
 
@@ -362,6 +574,7 @@ def stream_stop(stream_id):
 @app.route("/stream/apply/<int:stream_id>", methods=["POST"])
 @login_required
 def stream_apply(stream_id):
+    stream = _owned_stream(stream_id)
     ok, msg = manager.apply_now(stream_id)
     flash(msg, "ok" if ok else "error")
     return redirect(url_for("stream_detail", stream_id=stream_id))
@@ -370,6 +583,7 @@ def stream_apply(stream_id):
 @app.route("/stream/schedule/<int:stream_id>", methods=["POST"])
 @login_required
 def stream_schedule(stream_id):
+    _owned_stream(stream_id)
     when = request.form.get("scheduled_at", "").strip()
     if when:
         # HTML datetime-local -> unix ts (server local time).
@@ -397,6 +611,7 @@ def _remove_video_files(video):
 @app.route("/upload/<int:stream_id>", methods=["POST"])
 @login_required
 def upload(stream_id):
+    _owned_stream(stream_id)
     stream = db.get_stream(stream_id)
     if not stream:
         abort(404)
@@ -430,6 +645,7 @@ def video_set_loop(video_id):
     video = db.get_video(video_id)
     if not video:
         abort(404)
+    _owned_stream(video["stream_id"])
     kind = video["kind"] if "kind" in video.keys() else "video"
     if kind == "audio" or video["status"] != "completed":
         flash("Only an encoded video can be set as the loop background", "error")
@@ -446,7 +662,11 @@ def video_delete(video_id):
     video = db.get_video(video_id)
     if not video:
         abort(404)
-    
+    # Deleting videos is owner-level: workers may manage their streams' queues
+    # but never remove the files themselves.
+    if current_role() != "admin":
+        abort(403)
+
     pid = video["encode_pid"] if "encode_pid" in video.keys() else None
     if pid:
         try:
@@ -527,6 +747,7 @@ def api_stream_status(stream_id):
 @login_required
 def stream_mix(stream_id):
     """Music streams: mix the background video's own sound under the playlist."""
+    _owned_stream(stream_id)
     try:
         data = request.get_json() or {}
         enabled = bool(data.get('enabled', False))
@@ -545,6 +766,7 @@ def stream_mix(stream_id):
 @login_required
 def stream_volume(stream_id):
     """Playback loudness: video-stream audio or the music playlist (0..200%)."""
+    _owned_stream(stream_id)
     try:
         data = request.get_json() or {}
         vol = max(0, min(200, int(data.get('volume', 100))))
@@ -567,6 +789,7 @@ def api_reorder():
     order = data.get("order", [])
     if stream_id is None:
         return jsonify({"ok": False}), 400
+    _owned_stream(int(stream_id))
     db.reorder_videos(int(stream_id), [int(i) for i in order])
     return jsonify({"ok": True})
 
@@ -590,6 +813,7 @@ bootstrap()
 @app.route('/api/stream_shuffle/<int:stream_id>', methods=['POST'])
 @login_required
 def toggle_shuffle(stream_id):
+    _owned_stream(stream_id)
     try:
         data = request.get_json() or {}
         enabled = data.get('enabled', False)

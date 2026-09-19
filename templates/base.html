@@ -18,15 +18,18 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=9">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=10">
 </head>
 <body>
   <div class="topbar">
     <a href="{{ url_for('dashboard') }}" class="brand"><span class="dot"></span>StreamCast</a>
     <nav>
       <button type="button" id="themeToggle" class="theme-toggle" title="Toggle dark theme" aria-label="Toggle dark theme">🌙</button>
+      {% if u_role == 'admin' %}<a href="{{ url_for('admin_panel') }}">Admin</a>{% endif %}
+      {% if session.get('authed') %}<a href="{{ url_for('change_password') }}">Password</a>{% endif %}
       <a href="{{ url_for('dashboard') }}">Streams</a>
-      {% if session.get('authed') %}<a href="{{ url_for('logout') }}">Log out</a>{% endif %}
+      {% if session.get('authed') %}<a href="{{ url_for('logout') }}">Log out</a>
+      {% else %}<a href="{{ url_for('login') }}">Log in</a>{% endif %}
     </nav>
   </div>
   <div class="container">
