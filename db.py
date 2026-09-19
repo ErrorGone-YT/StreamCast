@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS streams (
     is_live       INTEGER DEFAULT 0,
     pid           INTEGER,                -- ffmpeg process id when live
     scheduled_at  REAL,                   -- unix ts for a planned start, or NULL
-    created_at    REAL NOT NULL
+    created_at    REAL NOT NULL,
+    shuffle       INTEGER DEFAULT 0       -- 1 = random play enabled
 );
 
 CREATE TABLE IF NOT EXISTS videos (
@@ -40,14 +41,12 @@ CREATE TABLE IF NOT EXISTS videos (
 );
 """
 
-
 def _connect():
     conn = sqlite3.connect(config.DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
     return conn
-
 
 @contextmanager
 def get_db():
@@ -58,34 +57,27 @@ def get_db():
     finally:
         conn.close()
 
-
-
 def migrate_db():
     """Ensures all necessary columns exist in the database."""
     with get_db() as db:
-        # Add progress column
         try:
             db.execute("ALTER TABLE videos ADD COLUMN progress REAL DEFAULT 0")
         except sqlite3.OperationalError:
             pass
-        # Add encode_pid column
         try:
             db.execute("ALTER TABLE videos ADD COLUMN encode_pid INTEGER")
         except sqlite3.OperationalError:
             pass
-
+        try:
+            db.execute("ALTER TABLE streams ADD COLUMN shuffle INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
 
 def init_db():
     config.ensure_dirs()
     with get_db() as db:
         db.executescript(SCHEMA)
         migrate_db()
-        try:
-            db.execute("ALTER TABLE videos ADD COLUMN progress REAL DEFAULT 0")
-            db.execute("ALTER TABLE videos ADD COLUMN encode_pid INTEGER")
-        except sqlite3.OperationalError:
-            pass
-
 
 # --- Streams ----------------------------------------------------------------
 def create_stream(name, rtmp_key="", youtube_url=""):
@@ -97,11 +89,9 @@ def create_stream(name, rtmp_key="", youtube_url=""):
         )
         return cur.lastrowid
 
-
 def get_stream(stream_id):
     with get_db() as db:
         return db.execute("SELECT * FROM streams WHERE id = ?", (stream_id,)).fetchone()
-
 
 def list_streams():
     with get_db() as db:
@@ -115,7 +105,6 @@ def list_streams():
             result.append(d)
         return result
 
-
 def update_stream(stream_id, **fields):
     if not fields:
         return
@@ -126,15 +115,12 @@ def update_stream(stream_id, **fields):
             (*fields.values(), stream_id),
         )
 
-
 def delete_stream(stream_id):
     with get_db() as db:
         db.execute("DELETE FROM streams WHERE id = ?", (stream_id,))
 
-
 def set_live(stream_id, is_live, pid=None):
     update_stream(stream_id, is_live=1 if is_live else 0, pid=pid)
-
 
 # --- Videos -----------------------------------------------------------------
 def add_video(stream_id, orig_name, stored_name):
@@ -150,11 +136,9 @@ def add_video(stream_id, orig_name, stored_name):
         )
         return cur.lastrowid
 
-
 def get_video(video_id):
     with get_db() as db:
         return db.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
-
 
 def list_videos(stream_id):
     with get_db() as db:
@@ -162,7 +146,6 @@ def list_videos(stream_id):
             "SELECT * FROM videos WHERE stream_id = ? ORDER BY position, id",
             (stream_id,),
         ).fetchall()
-
 
 def list_ready_videos(stream_id):
     """Completed videos in play order — this is the actual 24/7 playlist."""
@@ -172,7 +155,6 @@ def list_ready_videos(stream_id):
             "ORDER BY position, id",
             (stream_id,),
         ).fetchall()
-
 
 def update_video(video_id, **fields):
     if not fields:
@@ -184,11 +166,9 @@ def update_video(video_id, **fields):
             (*fields.values(), video_id),
         )
 
-
 def delete_video(video_id):
     with get_db() as db:
         db.execute("DELETE FROM videos WHERE id = ?", (video_id,))
-
 
 def reorder_videos(stream_id, ordered_ids):
     with get_db() as db:
@@ -197,7 +177,6 @@ def reorder_videos(stream_id, ordered_ids):
                 "UPDATE videos SET position = ? WHERE id = ? AND stream_id = ?",
                 (pos, vid, stream_id),
             )
-
 
 def next_encode_job():
     """Oldest video still waiting to be normalized."""

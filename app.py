@@ -38,6 +38,7 @@ def login_required(view):
     return wrapped
 
 
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if not config.REQUIRE_LOGIN:
@@ -234,10 +235,24 @@ def api_video_statuses(stream_id):
     ])
 
 
-@app.route("/api/stream_status/<int:stream_id>")
-@login_required
+
+@app.route('/api/stream_status/<int:stream_id>')
 def api_stream_status(stream_id):
-    return jsonify(manager.status(stream_id))
+    runner_status = manager.status(stream_id)
+    stream = db.get_stream(stream_id)
+    shuffle = False
+    if stream:
+        try:
+            shuffle = bool(stream["shuffle"])
+        except:
+            shuffle = False
+    res = {
+        "live": runner_status.get("live", False),
+        "error": runner_status.get("error", ""),
+        "now_playing": runner_status.get("now_playing"),
+        "shuffle": shuffle
+    }
+    return jsonify(res)
 
 
 @app.route("/api/reorder", methods=["POST"])
@@ -252,6 +267,8 @@ def api_reorder():
     return jsonify({"ok": True})
 
 
+
+
 # --- Boot -------------------------------------------------------------------
 def bootstrap():
     db.init_db()
@@ -262,6 +279,21 @@ def bootstrap():
 bootstrap()
 
 
+
+
+
+
+@app.route('/api/stream_shuffle/<int:stream_id>', methods=['POST'])
+@login_required
+def toggle_shuffle(stream_id):
+    try:
+        data = request.get_json() or {}
+        enabled = data.get('enabled', False)
+        db.update_stream(stream_id, shuffle=1 if enabled else 0)
+        manager.apply_now(stream_id)
+        return jsonify({'status': 'ok', 'shuffle': enabled})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 if __name__ == "__main__":
     # Dev server. Use gunicorn in production (see README).
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)

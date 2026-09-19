@@ -15,6 +15,7 @@ no manual stop/start. `apply_now()` forces an immediate block restart.
 A watchdog restarts ffmpeg if it dies (network blip, YouTube reset), so the
 channel self-heals.
 """
+import random
 import subprocess
 import threading
 import time
@@ -38,51 +39,73 @@ class _Runner:
 
         # now-playing tracking (computed from wall-clock, since -re plays realtime)
         self._block_started = 0.0          # monotonic time the current block began
-        self._block_videos = []            # list of {id, duration} in play order
-        self._block_total = 0.0            # summed duration of one queue pass
+        self._block_videos = []            # {id, duration} in actual play order
+        self._block_total = 0.0            # summed duration of the whole block
 
     # -- playlist ------------------------------------------------------------
+    
+    
+    
+    
+    
+    
+    
+    
+    
     def _build_playlist(self):
-        """Rebuild from current DB state. Returns (path, videos, one_pass_dur)."""
-        videos = db.list_ready_videos(self.stream_id)
-        if not videos:
+        """Rebuild from current DB state.
+
+        Returns (path, play_order, block_total): play_order is the flattened
+        list of {id, duration} in the exact order the block plays them, and
+        block_total is its summed duration.
+        """
+        videos_base = db.list_ready_videos(self.stream_id)
+        if not videos_base:
             return None, [], 0.0
 
         stream = db.get_stream(self.stream_id)
-        loop = bool(stream and stream["loop_queue"])
+        is_shuffle = bool(stream["shuffle"]) if stream else False
+        loop = bool(stream["loop_queue"]) if stream else False
 
-        one_pass = sum((v["duration"] or 0) for v in videos)
-        # Repeat the queue enough times to fill a block, so short queues don't
-        # force a YouTube reconnect every few seconds. If looping is off, play
-        # the queue exactly once.
+        one_pass = sum((v["duration"] or 0) for v in videos_base)
         repeats = 1
         if loop and one_pass > 0:
             repeats = max(1, int(config.RELOAD_BLOCK_SECONDS // one_pass) or 1)
 
         lines = ["ffconcat version 1.0"]
+        play_order = []
+        prev_ids = None
         for _ in range(repeats):
-            for v in videos:
+            cycle = list(videos_base)
+            if is_shuffle and len(cycle) > 1:
+                # Fresh order every pass; never repeat the previous pass's order.
+                for _ in range(10):
+                    random.shuffle(cycle)
+                    ids = [v["id"] for v in cycle]
+                    if ids != prev_ids:
+                        break
+            prev_ids = [v["id"] for v in cycle] if is_shuffle else None
+            for v in cycle:
                 path = (config.ENCODED_DIR / v["encoded_name"]).resolve()
-                safe = str(path).replace("\\", "/").replace("'", "'\\''")
-                lines.append(f"file '{safe}'")
+                # Use a simpler replacement to avoid JS escaping issues
+                safe_path = str(path).replace('\\', '/').replace("'", "'\\''")
+                lines.append(f"file '{safe_path}'")
+                play_order.append({"id": v["id"], "duration": v["duration"] or 0})
 
         pl = config.STORAGE_DIR / f"playlist_{self.stream_id}_{uuid.uuid4().hex}.txt"
         pl.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        meta = [{"id": v["id"], "duration": v["duration"] or 0} for v in videos]
-        return pl, meta, one_pass
+        block_total = sum(v["duration"] for v in play_order)
+        return pl, play_order, block_total
 
     def _cleanup_playlist(self):
-        if not self.playlist_path:
+        if self.playlist_path is None:
             return
-        for _ in range(10):
-            try:
-                self.playlist_path.unlink(missing_ok=True)
-                break
-            except (PermissionError, OSError):
-                time.sleep(0.3)
+        try:
+            self.playlist_path.unlink(missing_ok=True)
+        except Exception:
+            pass
         self.playlist_path = None
 
-    # -- ffmpeg command ------------------------------------------------------
     def _ffmpeg_cmd(self, stream):
         rtmp_url = f"{config.RTMP_BASE}/{stream['rtmp_key']}"
         return [
@@ -103,11 +126,11 @@ class _Runner:
             self.last_error = "No RTMP key set"
             return False
         # Validate there is at least one ready video before spawning a thread.
-        pl, meta, one_pass = self._build_playlist()
+        pl, play_order, block_total = self._build_playlist()
         if pl is None:
             self.last_error = "No ready videos in queue"
             return False
-        self.playlist_path, self._block_videos, self._block_total = pl, meta, one_pass
+        self.playlist_path, self._block_videos, self._block_total = pl, play_order, block_total
         self._stop.clear()
         self._reload.clear()
         self._thread = threading.Thread(target=self._supervise, daemon=True)
@@ -132,13 +155,13 @@ class _Runner:
 
             # (Re)build the playlist from current queue state for this block.
             if self.playlist_path is None:
-                pl, meta, one_pass = self._build_playlist()
+                pl, play_order, block_total = self._build_playlist()
                 if pl is None:
                     # queue emptied while live — wait and retry, don't die
                     self.last_error = "Queue is empty"
                     time.sleep(5)
                     continue
-                self.playlist_path, self._block_videos, self._block_total = pl, meta, one_pass
+                self.playlist_path, self._block_videos, self._block_total = pl, play_order, block_total
 
             self._spawn(stream)
 
@@ -214,7 +237,8 @@ class _Runner:
         """Which video is on air right now, and progress through it.
 
         Position is derived from elapsed wall-clock (ffmpeg -re plays in real
-        time) modulo one queue pass — no ffmpeg log parsing needed.
+        time), walked through the block's actual play order — so it stays
+        correct with shuffle on. No ffmpeg log parsing needed.
         """
         if not self._block_videos or self._block_total <= 0:
             return None

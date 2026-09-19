@@ -174,7 +174,19 @@ input:checked + .slider:before {
 
 {% block scripts %}
 <script>
+
 const streamId = {{ stream.id }};
+(async () => {
+  try {
+    const res = await fetch(`/api/stream_status/${streamId}`);
+    const data = await res.json();
+    if (data && data.shuffle !== undefined) {
+      const toggle = document.getElementById('shuffleToggle');
+      if (toggle) toggle.checked = data.shuffle;
+    }
+  } catch (e) { console.error('Error loading shuffle status', e); }
+})();
+
 
 
 
@@ -333,6 +345,25 @@ if (uploadForm) {
     uploadBtn.disabled = false;
     uploadForm.onsubmit = originalOnsubmit;
     setTimeout(() => window.location.reload(), 1000);
+  };
+}
+
+
+// --- Shuffle Toggle Handler ---
+const shuffleToggle = document.getElementById('shuffleToggle');
+if (shuffleToggle) {
+  shuffleToggle.onchange = async () => {
+    const enabled = shuffleToggle.checked;
+    try {
+      await fetch(`/api/stream_shuffle/${streamId}`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ enabled })
+      });
+    } catch (e) {
+      console.error('Failed to update shuffle status', e);
+      shuffleToggle.checked = !enabled;
+    }
   };
 }
 // --- Drag to reorder queue ---
