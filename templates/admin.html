@@ -41,8 +41,8 @@
   <div style="display:flex; flex-direction:column; gap:10px;">
     {% for u in users %}
     <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; border:1px solid var(--border); border-radius:10px; padding:10px 12px;">
-      <form method="post" action="{{ url_for('admin_update_user', user_id=u.id) }}"
-            style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; flex:1;">
+      <form method="post" id="user-form-{{ u.id }}" action="{{ url_for('admin_update_user', user_id=u.id) }}"
+            style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; flex:1; margin:0;">
         <select name="role" class="admin-input" style="max-width:170px;">
           {% for r in roles %}
           <option value="{{ r }}" {{ 'selected' if u.role == r }}>{{ r }}</option>
@@ -60,16 +60,20 @@
           {% endfor %}
         </div>
         {% endif %}
-        <button type="submit" class="btn">Save</button>
       </form>
-      <form method="post" action="{{ url_for('admin_regenerate_user', user_id=u.id) }}"
-            onsubmit="return confirm('Generate a new password for «{{ u.note or 'unnamed' }}»? The old one stops working.');">
-        <button type="submit" class="btn" title="Issue a new password, the old one stops working">↻ Password</button>
-      </form>
-      <form method="post" action="{{ url_for('admin_delete_user', user_id=u.id) }}"
-            onsubmit="return confirm('Remove account «{{ u.note or 'unnamed' }}»?');">
-        <button type="submit" class="btn" style="color:#d9534f;" title="Remove account">✕</button>
-      </form>
+      <div class="user-actions">
+        <button type="submit" form="user-form-{{ u.id }}" class="btn">Save</button>
+        <form method="post" action="{{ url_for('admin_regenerate_user', user_id=u.id) }}"
+              style="margin:0; display:flex;"
+              onsubmit="return confirm('Generate a new password for «{{ u.note or 'unnamed' }}»? The old one stops working.');">
+          <button type="submit" class="btn" title="Issue a new password, the old one stops working">↻ Password</button>
+        </form>
+        <form method="post" action="{{ url_for('admin_delete_user', user_id=u.id) }}"
+              style="margin:0; display:flex;"
+              onsubmit="return confirm('Remove account «{{ u.note or 'unnamed' }}»?');">
+          <button type="submit" class="btn" style="color:#d9534f;" title="Remove account">✕</button>
+        </form>
+      </div>
     </div>
     {% endfor %}
   </div>
@@ -83,13 +87,12 @@
   <p class="hint" style="margin-top:-6px">
     Signs in as the full owner. Setting it here overrides the STREAMCAST_PASSWORD env value.
   </p>
-  <form method="post" action="{{ url_for('change_password') }}"
-        style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-    <input type="password" name="current" class="admin-input" style="max-width:220px;"
+  <form method="post" action="{{ url_for('change_password') }}" class="admin-pass-form">
+    <input type="password" name="current" class="admin-input"
            placeholder="Current master password" required autocomplete="current-password">
-    <input type="password" name="new" class="admin-input" style="max-width:220px;"
+    <input type="password" name="new" class="admin-input"
            placeholder="New master password" required minlength="6" autocomplete="new-password">
-    <input type="password" name="confirm" class="admin-input" style="max-width:220px;"
+    <input type="password" name="confirm" class="admin-input"
            placeholder="Repeat new password" required minlength="6" autocomplete="new-password">
     <button type="submit" class="btn">Update</button>
   </form>

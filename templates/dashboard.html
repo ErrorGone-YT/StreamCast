@@ -72,7 +72,7 @@
             title="Session uptime"
             style="font-size:12.5px; font-variant-numeric:tabular-nums;"
             {% if not (s.live and s.uptime) %}hidden{% endif %}>{{ (s.uptime or 0)|hms }}</span>
-      {% if s.resolution %}<span class="qres {{ 'qres-max' if s.quality_mode == 'quality' }}" title="{{ 'Max quality mode' if s.quality_mode == 'quality' else 'Stream resolution' }}">{% if s.quality_mode == 'quality' %}✦ {% endif %}{{ s.resolution }}</span>{% endif %}
+
 
       <span class="spacer"></span>
 
@@ -123,6 +123,7 @@
       {% if s.youtube_url %}
         <a href="{{ s.youtube_url }}" target="_blank">YouTube ↗</a>
       {% endif %}
+      {% if s.resolution %}<span class="qres {{ 'qres-max' if s.quality_mode == 'quality' }}" title="{{ 'Max quality mode' if s.quality_mode == 'quality' else 'Stream resolution' }}">{% if s.quality_mode == 'quality' %}✦ {% endif %}{{ s.resolution }}</span>{% endif %}
     </div>
 
     <div style="display:flex; gap:8px; margin-top:16px;">

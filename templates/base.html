@@ -14,23 +14,34 @@
       }
       document.documentElement.setAttribute('data-theme', t);
     })();
+
+    function truncateMiddle(str, maxLen = 30) {
+      if (!str || str.length <= maxLen) return str;
+      const dot = "...";
+      const extIdx = str.lastIndexOf('.');
+      if (extIdx === -1) return str.slice(0, maxLen - 3) + dot;
+      const ext = str.slice(extIdx);
+      const name = str.slice(0, extIdx);
+      if (name.length <= maxLen - ext.length) return str;
+      return name.slice(0, Math.floor((maxLen - ext.length - 3) / 2)) + dot + name.slice(-(Math.ceil((maxLen - ext.length - 3) / 2))) + ext;
+    }
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=14">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=17">
 </head>
 <body>
   <div class="topbar">
     <a href="{{ url_for('dashboard') }}" class="brand"><span class="dot"></span>StreamCast</a>
     <nav>
       <button type="button" id="themeToggle" class="theme-toggle" title="Toggle dark theme" aria-label="Toggle dark theme">🌙</button>
+      <button type="button" id="menuToggle" class="topbar-icon" title="Menu" aria-label="Menu" aria-expanded="false" aria-controls="topbarMenu">☰</button>
       {% if session.get('authed') %}
       <a href="{{ url_for('logout') }}" class="topbar-icon" title="Log out" aria-label="Log out">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        <svg width="17" height="17" viewBox="viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
       </a>
       {% endif %}
-      <button type="button" id="menuToggle" class="topbar-icon" title="Menu" aria-label="Menu" aria-expanded="false" aria-controls="topbarMenu">☰</button>
     </nav>
   </div>
   <div class="topbar-menu" id="topbarMenu" hidden>
@@ -101,6 +112,17 @@
         if (e.target.closest('a')) setOpen(false);
       });
     })();
+
+    function truncateMiddle(str, maxLen = 30) {
+      if (!str || str.length <= maxLen) return str;
+      const dot = "...";
+      const extIdx = str.lastIndexOf('.');
+      if (extIdx === -1) return str.slice(0, maxLen - 3) + dot;
+      const ext = str.slice(extIdx);
+      const name = str.slice(0, extIdx);
+      if (name.length <= maxLen - ext.length) return str;
+      return name.slice(0, Math.floor((maxLen - ext.length - 3) / 2)) + dot + name.slice(-(Math.ceil((maxLen - ext.length - 3) / 2))) + ext;
+    }
   </script>
 </body>
 </html>

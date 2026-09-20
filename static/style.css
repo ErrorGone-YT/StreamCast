@@ -612,20 +612,58 @@ html[data-theme="dark"] .topbar-menu { background: #151926; border-color: rgba(2
   .grid { grid-template-columns: 1fr; gap: 14px; }
   .stream-card { padding: 14px; }
   .stream-card .row { gap: 6px 10px; }
-  /* Queue items: name on its own truncated line, badges underneath */
-  .qitem { flex-wrap: wrap; gap: 8px 10px; padding: 12px; }
-  .qmain { flex-basis: calc(100% - 26px); }
-  .qmeta { flex-basis: 100%; margin-left: 26px; }
-  .qname { font-size: 13.5px; }
 }
 .topbar-menu[hidden] { display: none; }
-/* Queue name truncates inside the new qmain/qmeta layout */
+/* Queue name truncates inside the qmain/qmeta layout */
 .qname { display: block; }
-@media (max-width: 640px) {
-  .qmeta { flex-wrap: nowrap; gap: 6px; overflow: hidden; }
-  .qmeta .btn-sm { padding: 6px 10px; }
+.truncate-middle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- Queue item: name block + badges row ---- */
+.qmain { flex: 1; min-width: 0; }
+.qmeta { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-wrap: wrap; }
+.qmeta form { margin: 0; display: flex; align-items: center; }
+
+/* ---- Admin panel: per-account actions + master password form ---- */
+.user-actions { display: flex; gap: 8px; align-items: center; margin-left: auto; flex: none; flex-wrap: nowrap; }
+.user-actions form { margin: 0; display: flex; }
+.admin-pass-form { display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
+.admin-pass-form .btn { justify-content: center; margin-top: 4px; }
+
+/* Touch-friendly queue reorder buttons (mobile only) */
+.qmove { display: none; }
+.qmove-btn {
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--muted);
+  border-radius: 6px; width: 28px; height: 26px; font-size: 10px; line-height: 1;
+  cursor: pointer; padding: 0; display: flex; align-items: center; justify-content: center;
 }
+.qmove-btn:hover { color: var(--text); border-color: var(--accent); }
+
+/* ---- Mobile: stream header + queue rows ---- */
 @media (max-width: 640px) {
   .card { padding: 16px; }
-  .qmeta { margin-left: 0; }
+
+  /* Stream page: action buttons stacked top-right, next to name/status */
+  .page-head.stream-head { flex-direction: row; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .stream-head .page-actions { margin-left: auto; flex-direction: column; align-items: stretch; gap: 8px; }
+
+  /* Queue rows: name + ▲▼ on line 1, slim badges line under it */
+  .qitem { flex-wrap: wrap; gap: 7px 8px; padding: 6px 12px; }
+  .qitem .qhandle { display: none; }  /* drag dots unused on phones — ▲▼ buttons instead */
+  .qmain { flex: 1 1 auto; min-width: 0; }
+  .qname { font-size: 13.5px; }
+  .qmove { display: flex; flex-direction: column; gap: 3px; flex: none; margin-left: auto; }
+  .qmeta {
+    flex-basis: 100%;
+    margin-left: 0;
+    justify-content: flex-end;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 7px;
+    overflow: hidden;
+  }
+  /* Delete ✕ sized like the ▲▼ buttons so the badges line stays slim */
+  .qmeta .btn-danger.btn-sm {
+    width: 26px; height: 26px; min-width: 0; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
 }
