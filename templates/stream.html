@@ -158,11 +158,11 @@
     {% for v in videos %}
     <li class="qitem" data-id="{{ v.id }}">
 
-      {% if u_role == 'admin' %}
-      <input type="checkbox" class="qselect" data-id="{{ v.id }}" aria-label="Select file for deletion">
-      {% endif %}
       <span class="qhandle" title="Drag to reorder">⠿</span>
       <div class="qrow-top">
+        {% if u_role == 'admin' %}
+        <input type="checkbox" class="qselect" data-id="{{ v.id }}" aria-label="Select file for deletion">
+        {% endif %}
         <div class="qmain">
           <span class="qname" title="{{ v.orig_name }}">{{ v.display_name }}</span>
           <div class="nowbar" data-nowbar hidden><div class="nowbar-fill" data-nowfill></div></div>
@@ -229,6 +229,7 @@
 <script>
 
 const streamId = {{ stream.id }};
+const canManage = {{ 'true' if can_manage else 'false' }};
 // Live session timer (HH:MM:SS), ticked client-side from the polled uptime.
 let liveNow = false;
 let liveBase = null;  // client-side epoch seconds the session started
@@ -511,7 +512,7 @@ if (streamVol && streamVolVal) {
 // Desktop: grab the ⠿ grip and drag with the mouse.
 // Touch: long-press (~250ms) a row, then drag — HTML5 drag never fires on touch.
 const queue = document.getElementById('queue');
-if (queue && {{ 'true' if can_manage else 'false' }}) {
+if (queue && canManage) {
   function saveOrder() {
     const order = [...queue.querySelectorAll('.qitem')].map(i => +i.dataset.id);
     fetch('{{ url_for("api_reorder") }}', {
@@ -673,23 +674,26 @@ if (qselects.length) {
 
 // --- Mini preview player (owner only) ---
 const previewDlg = document.getElementById('previewDlg');
+const openPreview = (btn) => {
+  if (!previewDlg) return;
+  const player = document.getElementById('previewPlayer');
+  document.getElementById('previewName').textContent = btn.dataset.name || '';
+  player.src = `/video/file/${btn.dataset.video}`;
+  previewDlg.showModal();
+  // Explicit play() inside the click handler carries user activation, so
+  // browsers allow sound; the autoplay attribute alone starts muted.
+  player.muted = false;
+  player.volume = 1;
+  player.play().catch(() => {
+    // Autoplay with sound rejected — start muted rather than not at all.
+    player.muted = true;
+    player.play().catch(() => {});
+  });
+};
 if (previewDlg) {
   const player = document.getElementById('previewPlayer');
   document.querySelectorAll('.qplay').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.getElementById('previewName').textContent = btn.dataset.name || '';
-      player.src = `/video/file/${btn.dataset.video}`;
-      previewDlg.showModal();
-      // Explicit play() inside the click handler carries user activation, so
-      // browsers allow sound; the autoplay attribute alone starts muted.
-      player.muted = false;
-      player.volume = 1;
-      player.play().catch(() => {
-        // Autoplay with sound rejected — start muted rather than not at all.
-        player.muted = true;
-        player.play().catch(() => {});
-      });
-    });
+    btn.addEventListener('click', () => openPreview(btn));
   });
   const stopPreview = () => { player.pause(); player.removeAttribute('src'); player.load(); };
   document.getElementById('previewClose').addEventListener('click', () => previewDlg.close());
@@ -733,6 +737,25 @@ async function poll() {
       if (sizeEl) {
         sizeEl.textContent = v.size_label || '';
         sizeEl.hidden = !v.size_label;
+      }
+
+      // Preview ▶ appears the moment the file is ready — no reload needed.
+      if (canManage) {
+        let play = li.querySelector('.qplay');
+        if (v.status === 'completed' && !play) {
+          play = document.createElement('button');
+          play.type = 'button';
+          play.className = 'qplay';
+          play.dataset.video = v.id;
+          const nameEl = li.querySelector('.qname');
+          play.dataset.name = nameEl ? nameEl.title : '';
+          play.title = 'Preview';
+          play.textContent = '▶';
+          play.addEventListener('click', () => openPreview(play));
+          li.querySelector('.qmeta').prepend(play);
+        } else if (play) {
+          play.hidden = v.status !== 'completed';
+        }
       }
 
       const progBar = li.querySelector('[data-qprogress]');

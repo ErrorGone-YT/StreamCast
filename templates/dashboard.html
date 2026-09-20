@@ -20,9 +20,7 @@
          style="width: {{ disk.used_pct }}%;"></div>
   </div>
   <span class="disk-label">{{ '%.1f'|format(disk.free_gb) }} GB free of {{ '%.1f'|format(disk.total_gb) }} GB</span>
-  {% if encoding_count %}
-  <span class="encode-chip" title="Files being normalized right now">🎞 {{ encoding_count }} encoding</span>
-  {% endif %}
+  <span id="encodeChip" class="encode-chip" title="Files being normalized right now" {% if not encoding_count %}hidden{% endif %}>🎞 {{ encoding_count }} encoding</span>
 </div>
 
 {% if streams %}
@@ -382,6 +380,20 @@ function applyThumbs(show) {
 }
 try { thumbToggle.checked = localStorage.getItem('sc-thumbs') !== '0'; } catch (e) {}
 thumbToggle.addEventListener('change', () => applyThumbs(thumbToggle.checked));
+
+// Encoding counter ticks live so uploads are visible without a reload.
+const encodeChip = document.getElementById('encodeChip');
+if (encodeChip) {
+  setInterval(async () => {
+    try {
+      const res = await fetch('/api/encode_count');
+      if (!res.ok) return;
+      const data = await res.json();
+      encodeChip.hidden = !data.count;
+      encodeChip.textContent = `🎞 ${data.count} encoding`;
+    } catch (e) { /* transient */ }
+  }, 5000);
+}
 
 updateStreams();
 </script>

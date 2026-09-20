@@ -811,6 +811,13 @@ def api_stream_status(stream_id):
     return jsonify(res)
 
 
+@app.route("/api/encode_count")
+@login_required
+def api_encode_count():
+    """Live count of queued/running encodes for the dashboard chip."""
+    return jsonify({"count": db.count_encoding_videos()})
+
+
 @app.route('/api/stream_mix/<int:stream_id>', methods=['POST'])
 @login_required
 @ajax_required

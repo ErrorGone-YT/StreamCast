@@ -692,6 +692,7 @@ input:checked + .slider:before { transform: translateX(14px); }
   transition: border-color .15s var(--ease), color .15s var(--ease);
 }
 .qplay:hover { border-color: var(--accent); }
+.qplay[hidden] { display: none; }
 .preview-dlg {
   border: 1px solid var(--border-strong); border-radius: 14px;
   padding: 14px; background: var(--surface); color: var(--text);
