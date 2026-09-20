@@ -17,6 +17,27 @@ import uuid
 import config
 import db
 
+# Active encode jobs keyed by video id, so a delete request can terminate the
+# running ffmpeg instead of trusting a DB-stored PID (stale/reused PIDs would
+# kill an innocent process).
+_jobs = {}
+_jobs_lock = threading.Lock()
+
+
+def terminate_job(video_id):
+    """Stop the encode running for a video, if any. Safe to call anytime."""
+    with _jobs_lock:
+        proc = _jobs.pop(video_id, None)
+    if not proc:
+        return False
+    if proc.poll() is None:
+        proc.terminate()  # SIGTERM on POSIX, TerminateProcess on Windows
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    return True
+
 
 def ffprobe_info(path):
     """Return (duration_seconds, fps, width, height) for a media file."""
@@ -61,10 +82,14 @@ def _transcode(video, cmd, out_path, total_duration, src_dims=(None, None), mode
     import re
 
     proc = subprocess.Popen(cmd, stderr=subprocess.PIPE, text=True, bufsize=1)
-    db.update_video(video["id"], encode_pid=proc.pid)
+    with _jobs_lock:
+        _jobs[video["id"]] = proc
+    db.update_video(video["id"], encode_pid=proc.pid)  # informational only
 
     # Regex for 'time=00:00:00.00'
     time_pattern = re.compile(r"time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})")
+
+    last_write = 0.0  # progress is throttled to ~1 write/sec, not per stderr line
 
     try:
         while True:
@@ -77,12 +102,17 @@ def _transcode(video, cmd, out_path, total_duration, src_dims=(None, None), mode
                 h, m, s, ms = map(int, match.groups())
                 current_time = h * 3600 + m * 60 + s + ms / 100
                 progress = (current_time / total_duration) * 100
-                db.update_video(video["id"], progress=min(100.0, progress))
+                now = time.monotonic()
+                if now - last_write >= 1.0:
+                    last_write = now
+                    db.update_video(video["id"], progress=min(100.0, progress))
     except Exception:
         # Log error or just let it fail
         pass
 
     proc.wait()
+    with _jobs_lock:
+        _jobs.pop(video["id"], None)
 
     if proc.returncode != 0:
         out_path.unlink(missing_ok=True)

@@ -20,6 +20,7 @@ import subprocess
 import threading
 import time
 import uuid
+from collections import deque
 
 import config
 import db
@@ -54,6 +55,10 @@ class _Runner:
         self._reload = threading.Event()   # set to force an immediate block restart
         self._thread = None
         self.last_error = ""
+
+        # ffmpeg stderr is drained continuously by a helper thread (a full pipe
+        # would block ffmpeg itself); the tail is kept for error reporting.
+        self._stderr_tail = deque(maxlen=20)
 
         # Live-session uptime (wall clock). Set once per runner start; block
         # rebuilds and watchdog restarts don't reset it. Reset on next start.
@@ -290,11 +295,30 @@ class _Runner:
         self._thread.start()
         return True
 
+    def _drain_stderr(self):
+        """Read ffmpeg's stderr in the background until the process exits.
+
+        Without a reader the pipe buffer (~64 KB) fills up on warning-heavy
+        runs (e.g. repeated 'Non-monotonous DTS' with concat) and ffmpeg
+        blocks on write — looking exactly like a hung stream.
+        """
+        try:
+            for line in self.proc.stderr:
+                self._stderr_tail.append(line.rstrip())
+        except Exception:
+            pass
+        finally:
+            try:
+                self.proc.stderr.close()
+            except Exception:
+                pass
+
     def _spawn(self, stream):
         self.proc = subprocess.Popen(
             self._ffmpeg_cmd(stream),
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
         )
+        threading.Thread(target=self._drain_stderr, daemon=True).start()
         self._block_started = time.monotonic()
         db.set_live(self.stream_id, True, pid=self.proc.pid)
 
@@ -353,8 +377,9 @@ class _Runner:
             # ffmpeg exited on its own. A clean exit (rc 0) is a normal block/loop
             # boundary; a non-zero code means it faulted (network, bad key, etc).
             if not killed_by_us and rc not in (0, None):
-                err = self.proc.stderr.read() if self.proc.stderr else ""
-                self.last_error = (err or "").strip()[-300:]
+                # The drain thread kept the tail for us (the pipe reader can't
+                # block here — the process has already exited).
+                self.last_error = (" | ".join(self._stderr_tail) or "").strip()[-300:]
                 now = time.time()
                 if first_failure is None or now - spawned_at >= config.YOUTUBE_GRACE_SECONDS:
                     # It ran healthy since the last spawn — start a new streak.

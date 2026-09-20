@@ -15,11 +15,9 @@ from flask import (
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
-import os
-import signal
 import config
 import db
-from encoder import ffprobe_info, worker as encoder_worker
+from encoder import ffprobe_info, terminate_job, worker as encoder_worker
 from streamer import manager
 
 # --- Display helpers ---------------------------------------------------------
@@ -675,13 +673,9 @@ def video_delete(video_id):
     if current_role() != "admin":
         abort(403)
 
-    pid = video["encode_pid"] if "encode_pid" in video.keys() else None
-    if pid:
-        try:
-            os.kill(pid, signal.SIGTERM)
-            time.sleep(0.2)
-        except (ProcessLookupError, OSError):
-            pass
+    # Stop a running encode via the in-memory job registry — the DB-stored
+    # encode_pid may be stale (OS PID reuse) and must never be killed blindly.
+    terminate_job(video_id)
 
     # Clear the music stream's background if its loop video is being deleted.
     stream = db.get_stream(video["stream_id"])
@@ -713,6 +707,7 @@ def api_video_statuses(stream_id):
 
 
 @app.route("/thumb/<int:video_id>")
+@login_required
 def video_thumb(video_id):
     """Tile thumbnail: a frame grabbed from the encoded video."""
     video = db.get_video(video_id)
@@ -727,6 +722,7 @@ def video_thumb(video_id):
 
 
 @app.route('/api/stream_status/<int:stream_id>')
+@login_required
 def api_stream_status(stream_id):
     runner_status = manager.status(stream_id)
     stream = db.get_stream(stream_id)
