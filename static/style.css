@@ -278,7 +278,7 @@ input:focus {
 }
 .qitem:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
 .qitem > form { margin: 0; display: flex; align-items: center; }
-.qitem.dragging { opacity: .45; transform: scale(.99); }
+.qitem.dragging { opacity: .45; transform: scale(.99); pointer-events: none; }
 .qitem.drag-over { border-color: var(--accent); box-shadow: 0 0 0 4px rgba(59,91,253,.12); }
 .qhandle { cursor: grab; color: #c3c9d4; font-size: 18px; user-select: none; transition: color .15s var(--ease); }
 .qhandle:active { cursor: grabbing; }
@@ -509,16 +509,17 @@ html[data-theme="dark"] .qres-max {
   background: rgba(251, 191, 36, .12);
 }
 
-/* Corner toasts for dashboard tile switch actions */
+/* Corner toasts → centered toasts (same compact style, all screens) */
 .toast-stack {
   position: fixed;
   top: 78px;
-  right: 18px;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 1000;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  align-items: flex-end;
+  align-items: center;
   pointer-events: none;
 }
 .toast {
@@ -528,7 +529,7 @@ html[data-theme="dark"] .qres-max {
   border-radius: 10px;
   font-size: 13px;
   font-weight: 600;
-  max-width: 340px;
+  max-width: min(340px, calc(100vw - 24px));
   box-shadow: var(--shadow-lg);
   animation: rise .3s var(--ease) both;
 }
@@ -641,6 +642,18 @@ html[data-theme="dark"] .topbar-menu { background: #151926; border-color: rgba(2
 .page-actions .pa-apply { width: 100%; }
 .page-actions .pa-apply .btn { width: 100%; justify-content: center; }
 
+/* ---- Dashboard disk usage strip ---- */
+.disk-strip { display: flex; align-items: center; gap: 10px; margin: 18px 0 4px; }
+.disk-bar { flex: 1; height: 8px; border-radius: 999px; background: var(--border); overflow: hidden; }
+.disk-bar-fill {
+  height: 100%; border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+  transition: width .4s var(--ease);
+}
+.disk-bar-fill.warn { background: linear-gradient(90deg, #fbbf24, #f59e0b); }
+.disk-bar-fill.low { background: linear-gradient(90deg, #ff5a70, var(--live)); }
+.disk-label { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
 /* ---- Queue card header + control rows ---- */
 .qhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
 .qhead h2 { margin: 0; }
@@ -674,7 +687,10 @@ html[data-theme="dark"] .topbar-menu { background: #151926; border-color: rgba(2
   .stream-meta .yt-link { flex-basis: 100%; text-align: center; margin-top: 2px; }
 
   /* Queue rows: name + ▲▼ share one centered line, badges line under it */
-  .qitem { flex-wrap: wrap; gap: 7px 8px; padding: 6px 12px; }
+  .qitem {
+    flex-wrap: wrap; gap: 7px 8px; padding: 6px 12px;
+    -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
+  }
   .qitem .qhandle { display: none; }  /* drag dots unused on phones — ▲▼ buttons instead */
   .qrow-top { display: flex; align-items: center; gap: 8px; flex-basis: 100%; min-width: 0; max-width: 100%; }
   /* flex-basis 0 + overflow:hidden so long nowrap names can never push the ▲▼ away */

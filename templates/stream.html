@@ -570,8 +570,70 @@ if (queue && {{ 'true' if can_manage else 'false' }}) {
         if (next) item.parentNode.insertBefore(next, item);
       }
       saveOrder();
+      btn.blur();  // drop the focus ring so it doesn't stick to the tapped arrow
     });
   });
+
+  // --- Touch drag to reorder: long-press (~250ms), then move the finger.
+  // Items swap as the finger crosses their midline; HTML5 drag never fires on touch.
+  let touchDrag = null;
+  const ITEM_GAP = 10;  // .qitem margin-bottom
+  queue.addEventListener('touchstart', e => {
+    const item = e.target.closest('.qitem');
+    if (!item || e.touches.length !== 1) return;
+    touchDrag = {
+      item,
+      startX: e.touches[0].clientX,
+      startY: e.touches[0].clientY,
+      active: false,
+      timer: setTimeout(() => {
+        if (!touchDrag) return;
+        touchDrag.active = true;
+        touchDrag.item.classList.add('dragging');
+        touchDrag.item.style.transform = 'none';  // override the .dragging scale
+        if (navigator.vibrate) navigator.vibrate(15);
+      }, 250),
+    };
+  }, { passive: true });
+
+  queue.addEventListener('touchmove', e => {
+    if (!touchDrag) return;
+    const t = e.touches[0];
+    if (!touchDrag.active) {
+      // Finger drifted before the long-press fired → that's a scroll, not a drag.
+      if (Math.abs(t.clientY - touchDrag.startY) > 12 || Math.abs(t.clientX - touchDrag.startX) > 12) {
+        clearTimeout(touchDrag.timer);
+        touchDrag = null;
+      }
+      return;
+    }
+    e.preventDefault();  // stop the page from scrolling mid-drag
+    touchDrag.item.style.transform = `translateY(${t.clientY - touchDrag.startY}px)`;
+    const under = document.elementFromPoint(t.clientX, t.clientY);
+    const over = under && under.closest('.qitem');
+    if (over && over !== touchDrag.item) {
+      const r = over.getBoundingClientRect();
+      const h = r.height + ITEM_GAP;
+      if (t.clientY > r.top + r.height / 2) {
+        over.after(touchDrag.item);
+        touchDrag.startY += h;  // keep the follow-offset in sync with the swap
+      } else {
+        over.before(touchDrag.item);
+        touchDrag.startY -= h;
+      }
+    }
+  }, { passive: false });
+
+  const endTouchDrag = () => {
+    if (!touchDrag) return;
+    clearTimeout(touchDrag.timer);
+    touchDrag.item.classList.remove('dragging');
+    touchDrag.item.style.transform = '';
+    if (touchDrag.active) saveOrder();
+    touchDrag = null;
+  };
+  queue.addEventListener('touchend', endTouchDrag);
+  queue.addEventListener('touchcancel', endTouchDrag);
 }
 
 // Keep the file extension readable: when the name overflows, trim the middle

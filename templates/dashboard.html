@@ -10,6 +10,14 @@
   <a href="{{ url_for('stream_create') }}" class="btn btn-primary">+ New stream</a>
 </div>
 
+<div class="disk-strip" title="Free space on the disk that holds storage/">
+  <div class="disk-bar">
+    <div class="disk-bar-fill {{ 'low' if disk.used_pct >= 90 else ('warn' if disk.used_pct >= 75) }}"
+         style="width: {{ disk.used_pct }}%;"></div>
+  </div>
+  <span class="disk-label">{{ '%.1f'|format(disk.free_gb) }} GB free of {{ '%.1f'|format(disk.total_gb) }} GB</span>
+</div>
+
 {% if streams %}
 
 <div style="display:flex; gap:8px; margin:20px 0; flex-wrap:wrap; align-items:center;">

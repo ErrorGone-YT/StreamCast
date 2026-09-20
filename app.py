@@ -1,6 +1,7 @@
 """StreamCast — single-owner 24/7 YouTube streaming panel."""
 import re
 import secrets
+import shutil
 import subprocess
 import time
 import uuid
@@ -427,7 +428,14 @@ def dashboard():
         s["yt_id"] = _youtube_id(s["youtube_url"])
         s["thumb_url"] = _stream_thumb_url(s)
         s["can_manage"] = _owns_stream(s)
-    return render_template("dashboard.html", streams=streams)
+    # Disk holding the storage dir: exact free/total in GB for the dashboard bar.
+    usage = shutil.disk_usage(config.STORAGE_DIR)
+    disk = {
+        "free_gb": usage.free / 1024 ** 3,
+        "total_gb": usage.total / 1024 ** 3,
+        "used_pct": round(100 * usage.used / usage.total, 1) if usage.total else 0,
+    }
+    return render_template("dashboard.html", streams=streams, disk=disk)
 
 
 # --- Stream CRUD -------------------------------------------------------------
