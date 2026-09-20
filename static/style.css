@@ -620,7 +620,6 @@ html[data-theme="dark"] .topbar-menu { background: #151926; border-color: rgba(2
 .topbar-menu[hidden] { display: none; }
 /* Queue name truncates inside the qmain/qmeta layout */
 .qname { display: block; }
-.truncate-middle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---- Queue item: name block + badges row ---- */
 .qmain { flex: 1; min-width: 0; }

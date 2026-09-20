@@ -71,15 +71,6 @@ class _Runner:
         self._block_total = 0.0            # summed duration of the whole block
 
     # -- playlist ------------------------------------------------------------
-    
-    
-    
-    
-    
-    
-    
-    
-    
     def _build_playlist(self):
         """Rebuild from current DB state.
 
@@ -405,6 +396,8 @@ class _Runner:
         if self.session_started:
             self.session_stopped = time.time()
         db.set_live(self.stream_id, False, pid=None)
+        # Persist the reason the session ended so it survives an app restart.
+        db.update_stream(self.stream_id, last_error=self.last_error)
 
     def apply_now(self):
         """Force the current block to end and rebuild from the latest queue."""
@@ -412,6 +405,7 @@ class _Runner:
 
     def stop(self):
         self._stop.set()
+        self.last_error = ""  # manual stop is not an error
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
             try:

@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS streams (
     video_volume  REAL DEFAULT 0.5,       -- music: background video sound level (0..2)
     music_volume  REAL DEFAULT 1.0,       -- music: playlist audio level (0..2)
     stream_volume REAL DEFAULT 1.0,       -- video: playback audio level (0..2)
-    quality_mode  TEXT DEFAULT 'balanced' -- 'quality' | 'balanced' | 'performance'
+    quality_mode  TEXT DEFAULT 'balanced', -- 'quality' | 'balanced' | 'performance'
+    last_error    TEXT DEFAULT ''          -- why the last session ended (survives restarts)
 );
 
 CREATE TABLE IF NOT EXISTS videos (
@@ -72,6 +73,9 @@ CREATE TABLE IF NOT EXISTS stream_access (
     stream_id INTEGER NOT NULL,
     PRIMARY KEY (user_id, stream_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_videos_stream_status ON videos(stream_id, status);
+CREATE INDEX IF NOT EXISTS idx_videos_stream_position ON videos(stream_id, position);
 """
 
 def _connect():
@@ -165,6 +169,10 @@ def migrate_db():
             db.execute("ALTER TABLE streams ADD COLUMN owner_id INTEGER")
         except sqlite3.OperationalError:
             pass
+        try:
+            db.execute("ALTER TABLE streams ADD COLUMN last_error TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
 
 def init_db():
     config.ensure_dirs()
@@ -190,23 +198,29 @@ def get_stream(stream_id):
 def list_streams():
     with get_db() as db:
         rows = db.execute("SELECT * FROM streams ORDER BY created_at DESC").fetchall()
+        # Two grouped queries for all streams instead of per-stream aggregates.
+        counts = {
+            r["stream_id"]: r["c"]
+            for r in db.execute(
+                "SELECT stream_id, COUNT(*) c FROM videos GROUP BY stream_id"
+            ).fetchall()
+        }
+        by_stream = {}
+        for a in db.execute(
+            "SELECT stream_id, kind, COALESCE(SUM(duration),0) dur, COALESCE(SUM(size),0) sz "
+            "FROM videos GROUP BY stream_id, kind"
+        ).fetchall():
+            d = by_stream.setdefault(a["stream_id"], {})
+            d[a["kind"] or "video"] = (a["dur"], a["sz"])
         result = []
         for r in rows:
             d = dict(r)
-            d["video_count"] = db.execute(
-                "SELECT COUNT(*) c FROM videos WHERE stream_id = ?", (r["id"],)
-            ).fetchone()["c"]
+            kinds = by_stream.get(r["id"], {})
+            d["video_count"] = counts.get(r["id"], 0)
             # Per-kind aggregates for the dashboard (runtime = bigger of the two).
-            by_kind = {}
-            for a in db.execute(
-                "SELECT kind, COALESCE(SUM(duration),0) dur, COALESCE(SUM(size),0) sz "
-                "FROM videos WHERE stream_id = ? GROUP BY kind",
-                (r["id"],),
-            ).fetchall():
-                by_kind[a["kind"] or "video"] = (a["dur"], a["sz"])
-            d["video_duration"] = by_kind.get("video", (0, 0))[0]
-            d["audio_duration"] = by_kind.get("audio", (0, 0))[0]
-            d["total_size"] = sum(sz for _, sz in by_kind.values())
+            d["video_duration"] = kinds.get("video", (0, 0))[0]
+            d["audio_duration"] = kinds.get("audio", (0, 0))[0]
+            d["total_size"] = sum(sz for _, sz in kinds.values())
             result.append(d)
         return result
 

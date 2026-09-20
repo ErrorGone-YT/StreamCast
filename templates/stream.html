@@ -410,7 +410,7 @@ if (shuffleToggle) {
     try {
       const res = await fetch(`/api/stream_shuffle/${streamId}`, {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
         body: JSON.stringify({ enabled })
       });
       if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -433,7 +433,7 @@ async function sendMixSettings() {
   try {
     const res = await fetch(`/api/stream_mix/${streamId}`, {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
       body: JSON.stringify(body)
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -462,7 +462,7 @@ async function sendVolume(volume) {
   try {
     const res = await fetch(`/api/stream_volume/${streamId}`, {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
       body: JSON.stringify({ volume })
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -493,7 +493,7 @@ if (queue && {{ 'true' if can_manage else 'false' }}) {
   function saveOrder() {
     const order = [...queue.querySelectorAll('.qitem')].map(i => +i.dataset.id);
     fetch('{{ url_for("api_reorder") }}', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
+      method: 'POST', headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
       body: JSON.stringify({ stream_id: streamId, order })
     });
   }

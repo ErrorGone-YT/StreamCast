@@ -1,4 +1,6 @@
 """StreamCast — single-owner 24/7 YouTube streaming panel."""
+import logging
+from logging.handlers import RotatingFileHandler
 import re
 import secrets
 import shutil
@@ -61,14 +63,6 @@ def _res_label(width, height):
     if m >= 480:
         return "480p"
     return f"{m}p"
-
-
-def _midcut(name, limit=48, tail=12):
-    """Truncate a long filename in the middle, keeping the extension visible."""
-    if len(name) <= limit:
-        return name
-    head = max(4, limit - tail - 1)
-    return name[:head] + "…" + name[-tail:]
 
 
 # Encoding target of the whole app (per-stream selection is not wired up yet).
@@ -240,6 +234,17 @@ def admin_required(view):
     def wrapped(*args, **kwargs):
         if not (session.get("authed") and session.get("role") == "admin"):
             return redirect(url_for("login", next=request.path))
+        return view(*args, **kwargs)
+    return wrapped
+
+
+def ajax_required(view):
+    """Light CSRF guard for the JSON APIs: a cross-site form/fetch cannot set
+    this custom header without a CORS preflight, which we never grant."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if request.headers.get("X-Requested-With") != "XMLHttpRequest":
+            abort(400)
         return view(*args, **kwargs)
     return wrapped
 
@@ -474,8 +479,14 @@ def stream_detail(stream_id):
         _hydrate_media_meta(v)
         v["res_label"] = _res_label(v.get("width"), v.get("height"))
         v["size_label"] = _fmt_size(v.get("size"))
-        v["display_name"] = _midcut(v["orig_name"])
+        # Full name: the client-side fitQueueNames() mid-truncates with the
+        # extension visible; CSS ellipsis is the no-JS fallback.
+        v["display_name"] = v["orig_name"]
     status = manager.status(stream_id)
+    if not status["live"] and not status["error"]:
+        # In-memory error is gone after a restart — fall back to the persisted one.
+        last = stream["last_error"] if "last_error" in stream.keys() else ""
+        status["error"] = last or ""
     vd, ad, sz = db.stream_totals(stream_id)
     totals_label = " · ".join(
         x for x in (_fmt_runtime(max(vd, ad)), _fmt_size(sz)) if x
@@ -705,7 +716,6 @@ def api_video_statuses(stream_id):
     return jsonify(videos)
 
 
-
 @app.route("/thumb/<int:video_id>")
 @login_required
 def video_thumb(video_id):
@@ -749,6 +759,7 @@ def api_stream_status(stream_id):
 
 @app.route('/api/stream_mix/<int:stream_id>', methods=['POST'])
 @login_required
+@ajax_required
 def stream_mix(stream_id):
     """Music streams: mix the background video's own sound under the playlist."""
     _owned_stream(stream_id)
@@ -768,6 +779,7 @@ def stream_mix(stream_id):
 
 @app.route('/api/stream_volume/<int:stream_id>', methods=['POST'])
 @login_required
+@ajax_required
 def stream_volume(stream_id):
     """Playback loudness: video-stream audio or the music playlist (0..200%)."""
     _owned_stream(stream_id)
@@ -787,6 +799,7 @@ def stream_volume(stream_id):
 
 @app.route("/api/reorder", methods=["POST"])
 @login_required
+@ajax_required
 def api_reorder():
     data = request.get_json(silent=True) or {}
     stream_id = data.get("stream_id")
@@ -801,21 +814,34 @@ def api_reorder():
 
 
 # --- Boot -------------------------------------------------------------------
+def _setup_logging():
+    """File + console logging so a VPS has something to inspect after a crash."""
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    file_h = RotatingFileHandler(
+        config.STORAGE_DIR / "streamcast.log",
+        maxBytes=2_000_000, backupCount=3, encoding="utf-8",
+    )
+    file_h.setFormatter(fmt)
+    root.addHandler(file_h)
+    console_h = logging.StreamHandler()
+    console_h.setFormatter(fmt)
+    root.addHandler(console_h)
+
+
 def bootstrap():
+    config.ensure_dirs()
+    _setup_logging()
     db.init_db()
     encoder_worker.start()
     manager.start_scheduler()
-
-
-bootstrap()
-
-
-
-
+    logging.getLogger("streamcast").info("StreamCast started")
 
 
 @app.route('/api/stream_shuffle/<int:stream_id>', methods=['POST'])
 @login_required
+@ajax_required
 def toggle_shuffle(stream_id):
     _owned_stream(stream_id)
     try:
@@ -826,6 +852,8 @@ def toggle_shuffle(stream_id):
         return jsonify({'status': 'ok', 'shuffle': enabled})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
+bootstrap()
+
 if __name__ == "__main__":
     # Dev server. Use gunicorn in production (see README).
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
