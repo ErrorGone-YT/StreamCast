@@ -566,3 +566,66 @@ html[data-theme="dark"] .toast-error { background: rgba(255,77,100,.12); color: 
   min-width: 0;
 }
 .admin-input:focus { border-color: var(--accent); }
+
+/* ---- Topbar icon buttons & dropdown menu (all screens) ---- */
+.topbar nav { gap: 10px; }
+.topbar nav .theme-toggle { margin-right: 0; }
+.topbar-icon {
+  width: 38px; height: 38px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer; padding: 0; line-height: 1; font-size: 17px;
+  transition: border-color .15s var(--ease), color .15s var(--ease), box-shadow .15s var(--ease);
+}
+.topbar-icon:hover { color: var(--text); border-color: var(--accent); box-shadow: var(--shadow-sm); }
+.topbar-icon svg { display: block; }
+.topbar-menu {
+  position: fixed; top: 72px; right: 18px; z-index: 1200;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+  padding: 6px; min-width: 210px;
+  display: flex; flex-direction: column;
+  animation: rise .25s var(--ease) both;
+}
+.topbar-menu a { padding: 11px 14px; border-radius: 9px; color: var(--text); font-weight: 600; font-size: 14px; text-decoration: none; }
+.topbar-menu a:hover { background: rgba(109,135,255,.10); color: var(--accent); }
+html[data-theme="dark"] .topbar-menu { background: #151926; border-color: rgba(255,255,255,.10); }
+
+/* ---- Queue item: name block + badges row ---- */
+.qmain { flex: 1; min-width: 0; }
+.qmeta { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-wrap: wrap; }
+
+/* ---- Mobile layout ---- */
+@media (max-width: 640px) {
+  .topbar { padding: 0 14px; }
+  .topbar-menu { right: 12px; }
+  .container { padding: 22px 14px 64px; }
+  h1 { font-size: 22px; }
+  .page-head { flex-direction: column; align-items: stretch; gap: 12px; }
+  .page-head .btn { justify-content: center; }
+  #stream-search { min-width: 0 !important; width: 100% !important; }
+  .grid { grid-template-columns: 1fr; gap: 14px; }
+  .stream-card { padding: 14px; }
+  .stream-card .row { gap: 6px 10px; }
+  /* Queue items: name on its own truncated line, badges underneath */
+  .qitem { flex-wrap: wrap; gap: 8px 10px; padding: 12px; }
+  .qmain { flex-basis: calc(100% - 26px); }
+  .qmeta { flex-basis: 100%; margin-left: 26px; }
+  .qname { font-size: 13.5px; }
+}
+.topbar-menu[hidden] { display: none; }
+/* Queue name truncates inside the new qmain/qmeta layout */
+.qname { display: block; }
+@media (max-width: 640px) {
+  .qmeta { flex-wrap: nowrap; gap: 6px; overflow: hidden; }
+  .qmeta .btn-sm { padding: 6px 10px; }
+}
+@media (max-width: 640px) {
+  .card { padding: 16px; }
+  .qmeta { margin-left: 0; }
+}

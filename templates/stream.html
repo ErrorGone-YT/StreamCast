@@ -190,11 +190,12 @@ input:checked + .slider:before {
     {% for v in videos %}
     <li class="qitem" draggable="true" data-id="{{ v.id }}">
       <span class="qhandle">⠿</span>
-      <div style="flex:1; min-width:0">
+      <div class="qmain">
         <span class="qname" title="{{ v.orig_name }}">{{ v.display_name }}</span>
         <div class="nowbar" data-nowbar hidden><div class="nowbar-fill" data-nowfill></div></div>
         <div class="qprogress" data-qprogress hidden style="height:4px; background:var(--border); border-radius:2px; margin-top:4px; overflow:hidden;"><div class="qprogress-fill" data-qprogress-fill style="height:100%; background:var(--accent, #007bff); width:0%; transition: width 0.3s;"></div></div>
       </div>
+      <div class="qmeta">
       <span class="nowtag" data-nowtag hidden>● ON AIR</span>
       {% if stream.stream_type == 'music' and v.kind == 'video' %}
         {% if stream.loop_video_id == v.id %}
@@ -214,6 +215,7 @@ input:checked + .slider:before {
       <form method="post" action="{{ url_for('video_delete', video_id=v.id) }}" onsubmit="return confirm('Delete this video?')">
         {% if u_role == 'admin' %}<button class="btn btn-sm btn-danger">✕</button>{% endif %}
       </form>
+      </div>
     </li>
     {% endfor %}
   </ul>

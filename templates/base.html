@@ -18,19 +18,26 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=10">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=14">
 </head>
 <body>
   <div class="topbar">
     <a href="{{ url_for('dashboard') }}" class="brand"><span class="dot"></span>StreamCast</a>
     <nav>
       <button type="button" id="themeToggle" class="theme-toggle" title="Toggle dark theme" aria-label="Toggle dark theme">🌙</button>
-      {% if u_role == 'admin' %}<a href="{{ url_for('admin_panel') }}">Admin</a>{% endif %}
-      {% if session.get('authed') %}<a href="{{ url_for('change_password') }}">Password</a>{% endif %}
-      <a href="{{ url_for('dashboard') }}">Streams</a>
-      {% if session.get('authed') %}<a href="{{ url_for('logout') }}">Log out</a>
-      {% else %}<a href="{{ url_for('login') }}">Log in</a>{% endif %}
+      {% if session.get('authed') %}
+      <a href="{{ url_for('logout') }}" class="topbar-icon" title="Log out" aria-label="Log out">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      </a>
+      {% endif %}
+      <button type="button" id="menuToggle" class="topbar-icon" title="Menu" aria-label="Menu" aria-expanded="false" aria-controls="topbarMenu">☰</button>
     </nav>
+  </div>
+  <div class="topbar-menu" id="topbarMenu" hidden>
+    <a href="{{ url_for('dashboard') }}">Streams</a>
+    {% if u_role == 'admin' %}<a href="{{ url_for('admin_panel') }}">Admin panel</a>{% endif %}
+    {% if session.get('authed') %}<a href="{{ url_for('change_password') }}">Change password</a>
+    {% else %}<a href="{{ url_for('login') }}">Log in</a>{% endif %}
   </div>
   <div class="container">
     {% with messages = get_flashed_messages(with_categories=true) %}
@@ -68,6 +75,30 @@
         root.setAttribute('data-theme', next);
         try { localStorage.setItem('sc-theme', next); } catch (e) {}
         setIcon();
+      });
+    })();
+
+    // Topbar dropdown menu: toggle on burger, close on outside click / Esc / link.
+    (function () {
+      var btn = document.getElementById('menuToggle');
+      var menu = document.getElementById('topbarMenu');
+      if (!btn || !menu) return;
+      var setOpen = function (open) {
+        menu.hidden = !open;
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      };
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        setOpen(menu.hidden);
+      });
+      document.addEventListener('click', function (e) {
+        if (!menu.hidden && !menu.contains(e.target) && e.target !== btn) setOpen(false);
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') setOpen(false);
+      });
+      menu.addEventListener('click', function (e) {
+        if (e.target.closest('a')) setOpen(false);
       });
     })();
   </script>
