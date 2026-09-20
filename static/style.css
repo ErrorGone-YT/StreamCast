@@ -664,15 +664,6 @@ html[data-theme="dark"] .topbar-menu { background: #151926; border-color: rgba(2
 .qtot-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 14px; margin: 0 0 16px; font-size: 13px; }
 .qtot-row.qtot-right { justify-content: flex-end; }
 
-/* Touch-friendly queue reorder buttons (mobile only) */
-.qmove { display: none; }
-.qmove-btn {
-  border: 1px solid var(--border-strong); background: var(--surface); color: var(--muted);
-  border-radius: 6px; width: 28px; height: 26px; font-size: 10px; line-height: 1;
-  cursor: pointer; padding: 0; display: flex; align-items: center; justify-content: center;
-}
-.qmove-btn:hover { color: var(--text); border-color: var(--accent); }
-
 /* ---- Mobile: stream header + queue rows ---- */
 @media (max-width: 640px) {
   .card { padding: 16px; }
@@ -693,10 +684,9 @@ html[data-theme="dark"] .topbar-menu { background: #151926; border-color: rgba(2
   }
   .qitem .qhandle { display: none; }  /* drag dots unused on phones — ▲▼ buttons instead */
   .qrow-top { display: flex; align-items: center; gap: 8px; flex-basis: 100%; min-width: 0; max-width: 100%; }
-  /* flex-basis 0 + overflow:hidden so long nowrap names can never push the ▲▼ away */
+  /* flex-basis 0 + overflow:hidden so long nowrap names can never push the badges away */
   .qmain { flex: 1 1 0; min-width: 0; overflow: hidden; }
   .qname { font-size: 13.5px; }
-  .qmove { display: flex; flex-direction: column; gap: 3px; flex: none; margin-left: 0; }
   .qmeta {
     flex-basis: 100%;
     margin-left: 0;

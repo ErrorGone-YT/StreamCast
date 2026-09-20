@@ -138,7 +138,6 @@ input:checked + .slider:before {
       {% endif %}
     </span>
   </div>
-    <span id="queueHint" class="muted qhint">Drag to reorder — this is the play order</span>
   {% if stream.stream_type == 'music' %}
   <p class="hint qnote">
     One video file loops as the visual while audio tracks play over it.
@@ -191,20 +190,17 @@ input:checked + .slider:before {
   </p>
   {% endif %}
   {% if videos %}
+  <span id="queueHint" class="muted qhint">Drag rows to reorder — this is the play order</span>
   <ul class="queue" id="queue" data-stream="{{ stream.id }}">
     {% for v in videos %}
-    <li class="qitem" draggable="true" data-id="{{ v.id }}">
+    <li class="qitem" data-id="{{ v.id }}">
 
-      <span class="qhandle">⠿</span>
+      <span class="qhandle" title="Drag to reorder">⠿</span>
       <div class="qrow-top">
         <div class="qmain">
           <span class="qname" title="{{ v.orig_name }}">{{ v.display_name }}</span>
           <div class="nowbar" data-nowbar hidden><div class="nowbar-fill" data-nowfill></div></div>
           <div class="qprogress" data-qprogress hidden style="height:4px; background:var(--border); border-radius:2px; margin-top:4px; overflow:hidden;"><div class="qprogress-fill" data-qprogress-fill style="height:100%; background:var(--accent, #007bff); width:0%; transition: width 0.3s;"></div></div>
-        </div>
-        <div class="qmove" title="Reorder">
-          <button type="button" class="qmove-btn" data-dir="up" aria-label="Move up">▲</button>
-          <button type="button" class="qmove-btn" data-dir="down" aria-label="Move down">▼</button>
         </div>
       </div>
       <div class="qmeta">
@@ -532,25 +528,11 @@ if (streamVol && streamVolVal) {
   streamVol.oninput = () => { streamVolVal.textContent = streamVol.value + '%'; };
   streamVol.onchange = () => sendVolume(+streamVol.value);
 }
-// --- Drag to reorder queue (manage rights required) ---
+// --- Reorder queue (manage rights required) ---
+// Desktop: grab the ⠿ grip and drag with the mouse.
+// Touch: long-press (~250ms) a row, then drag — HTML5 drag never fires on touch.
 const queue = document.getElementById('queue');
 if (queue && {{ 'true' if can_manage else 'false' }}) {
-  let dragEl = null;
-  queue.querySelectorAll('.qitem').forEach(item => {
-    item.addEventListener('dragstart', () => { dragEl = item; item.classList.add('dragging'); });
-    item.addEventListener('dragend', () => {
-      item.classList.remove('dragging');
-      queue.querySelectorAll('.qitem').forEach(i => i.classList.remove('drag-over'));
-      saveOrder();
-    });
-    item.addEventListener('dragover', e => {
-      e.preventDefault();
-      const after = e.clientY > item.getBoundingClientRect().top + item.offsetHeight / 2;
-      queue.querySelectorAll('.qitem').forEach(i => i.classList.remove('drag-over'));
-      item.classList.add('drag-over');
-      if (after) item.after(dragEl); else item.before(dragEl);
-    });
-  });
   function saveOrder() {
     const order = [...queue.querySelectorAll('.qitem')].map(i => +i.dataset.id);
     fetch('{{ url_for("api_reorder") }}', {
@@ -558,24 +540,43 @@ if (queue && {{ 'true' if can_manage else 'false' }}) {
       body: JSON.stringify({ stream_id: streamId, order })
     });
   }
-  // Touch-friendly reorder (HTML5 drag&drop doesn't fire on phones).
-  queue.querySelectorAll('.qmove-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const item = btn.closest('.qitem');
-      if (btn.dataset.dir === 'up') {
-        const prev = item.previousElementSibling;
-        if (prev) item.parentNode.insertBefore(item, prev);
-      } else {
-        const next = item.nextElementSibling;
-        if (next) item.parentNode.insertBefore(next, item);
-      }
-      saveOrder();
-      btn.blur();  // drop the focus ring so it doesn't stick to the tapped arrow
-    });
-  });
+  // Swap the dragged row with the one under the pointer when its midline is crossed.
+  function swapAt(item, x, y) {
+    const under = document.elementFromPoint(x, y);
+    const over = under && under.closest('.qitem');
+    if (!over || over === item) return false;
+    const r = over.getBoundingClientRect();
+    if (y > r.top + r.height / 2) over.after(item); else over.before(item);
+    return true;
+  }
 
-  // --- Touch drag to reorder: long-press (~250ms), then move the finger.
-  // Items swap as the finger crosses their midline; HTML5 drag never fires on touch.
+  // --- Mouse drag by the grip ---
+  let mouseDrag = null;
+  queue.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'mouse') return;  // touch uses the long-press path
+    const handle = e.target.closest('.qhandle');
+    if (!handle) return;
+    e.preventDefault();  // no text selection while gripping
+    mouseDrag = { item: handle.closest('.qitem'), moved: false };
+  });
+  document.addEventListener('pointermove', e => {
+    if (!mouseDrag) return;
+    if (!mouseDrag.moved) {
+      mouseDrag.moved = true;
+      mouseDrag.item.classList.add('dragging');
+    }
+    swapAt(mouseDrag.item, e.clientX, e.clientY);
+  });
+  const endMouseDrag = () => {
+    if (!mouseDrag) return;
+    mouseDrag.item.classList.remove('dragging');
+    if (mouseDrag.moved) saveOrder();
+    mouseDrag = null;
+  };
+  document.addEventListener('pointerup', endMouseDrag);
+  document.addEventListener('pointercancel', endMouseDrag);
+
+  // --- Touch long-press drag ---
   let touchDrag = null;
   const ITEM_GAP = 10;  // .qitem margin-bottom
   queue.addEventListener('touchstart', e => {
@@ -658,6 +659,7 @@ function fitQueueNames() {
 }
 fitQueueNames();
 window.addEventListener('resize', fitQueueNames);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitQueueNames);  // re-measure after the webfont swaps in
 
 // --- Live polling: encode statuses + stream live state ---
 async function poll() {

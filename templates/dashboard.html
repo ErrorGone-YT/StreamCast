@@ -256,6 +256,11 @@ document.querySelectorAll('.live-switch').forEach(sw => {
     sw.classList.toggle('on', turningOn);
     sw.setAttribute('aria-checked', turningOn ? 'true' : 'false');
     sw.title = turningOn ? 'Stop streaming' : 'Go live';
+    // Point the form at the opposite endpoint so the NEXT toggle posts correctly —
+    // otherwise an off→on→off cycle would hit the stale start URL and never stop.
+    form.action = turningOn
+      ? form.action.replace('/stream/start/', '/stream/stop/')
+      : form.action.replace('/stream/stop/', '/stream/start/');
 
     if (pill) {
       pill.className = 'pill ' + (turningOn ? 'pill-live' : 'pill-off');
@@ -295,13 +300,15 @@ function updateStreams() {
 
   document.querySelectorAll('.stream-item').forEach(function(item) {
 
+    // Status (live/offline) and type (music/video) are separate categories:
+    // multiple chips inside a category = ANY of them, across categories = BOTH.
+    const selected = [...activeFilters];
+    const wantedStatus = selected.filter(f => f === 'live' || f === 'offline');
+    const wantedType = selected.filter(f => f === 'music' || f === 'video');
+
     const matchesFilter =
-      activeFilters.size === 0 ||
-      [...activeFilters].some(function(f) {
-        return f === 'live' || f === 'offline'
-          ? item.dataset.status === f
-          : item.dataset.type === f;
-      });
+      (wantedStatus.length === 0 || wantedStatus.some(f => item.dataset.status === f)) &&
+      (wantedType.length === 0 || wantedType.some(f => item.dataset.type === f));
 
     const matchesSearch =
       !search ||
