@@ -60,20 +60,24 @@ input:checked + .slider:before {
       {% if stream.youtube_url %}<a href="{{ stream.youtube_url }}" target="_blank">Watch on YouTube ↗</a>{% endif %}
     </div>
   </div>
-  <div class="row page-actions" style="display:flex; flex-direction:row; align-items:center; justify-content:flex-end; gap:8px; margin-left:auto;">
+  <div class="page-actions">
     {% if can_manage %}
-    <a href="{{ url_for('stream_edit', stream_id=stream.id) }}" class="btn" style="width:auto; justify-content:center;">Edit</a>
+    <div class="pa-row">
+      <a href="{{ url_for('stream_edit', stream_id=stream.id) }}" class="btn">Edit</a>
+      {% if status.live %}
+        <form method="post" action="{{ url_for('stream_stop', stream_id=stream.id) }}">
+          <button class="btn btn-danger">■ Stop</button>
+        </form>
+      {% else %}
+        <form method="post" action="{{ url_for('stream_start', stream_id=stream.id) }}">
+          <button class="btn btn-live">● Go live</button>
+        </form>
+      {% endif %}
+    </div>
     {% if status.live %}
-      <form method="post" action="{{ url_for('stream_stop', stream_id=stream.id) }}" style="margin:0;">
-        <button class="btn btn-danger" style="width:auto;">■ Stop</button>
-      </form>
-      <form method="post" action="{{ url_for('stream_apply', stream_id=stream.id) }}" style="margin:0;">
-        <button class="btn" title="Rebuild the broadcast from the current queue right now" style="width:auto;">↻ Apply queue now</button>
-      </form>
-    {% else %}
-      <form method="post" action="{{ url_for('stream_start', stream_id=stream.id) }}" style="margin:0;">
-        <button class="btn btn-live" style="width:auto;">● Go live</button>
-      </form>
+    <form class="pa-apply" method="post" action="{{ url_for('stream_apply', stream_id=stream.id) }}">
+      <button class="btn" title="Rebuild the broadcast from the current queue right now">↻ Apply queue now</button>
+    </form>
     {% endif %}
     {% endif %}
   </div>
@@ -122,33 +126,25 @@ input:checked + .slider:before {
 
 <!-- Queue -->
 <div class="card">
-  <div class="row" style="margin-bottom:16px">
-    
-    <div style="margin-bottom:15px;">
-      <h2 style="margin:0">{{ 'Audio queue' if stream.stream_type == 'music' else 'Video queue' }}</h2>
-    <span class="spacer"></span>
-      <div style="display:flex; justify-content:flex-end; align-items:center; gap:8px; font-size:13px; color:var(--muted, #666); margin-top:8px;">
-        {% if can_manage %}
-        <span style="font-weight:500;">Random Play</span>
-        <label class="switch">
-          <input type="checkbox" id="shuffleToggle" {{ 'checked' if stream.shuffle else '' }}>
-          <span class="slider round"></span>
-        </label>
-        {% endif %}
-      </div>
-    </div>
-
-
-</div>
-    <span id="queueHint" class="muted" style="font-size:13px">Drag to reorder — this is the play order</span>
+  <div class="qhead">
+    <h2>{{ 'Audio queue' if stream.stream_type == 'music' else 'Video queue' }}</h2>
+    <span class="qhead-side">
+      {% if can_manage %}
+      <span style="font-weight:500;">Random Play</span>
+      <label class="switch">
+        <input type="checkbox" id="shuffleToggle" {{ 'checked' if stream.shuffle else '' }}>
+        <span class="slider round"></span>
+      </label>
+      {% endif %}
+    </span>
+  </div>
+    <span id="queueHint" class="muted qhint">Drag to reorder — this is the play order</span>
   {% if stream.stream_type == 'music' %}
-  <p class="hint" style="margin:-6px 0 16px">
+  <p class="hint qnote">
     One video file loops as the visual while audio tracks play over it.
     {% if not stream.loop_video_id %}<b>No loop video selected yet</b> — upload a video file and pick it below.{% endif %}
   </p>
-  <div style="display:flex; align-items:center; flex-wrap:wrap; gap:14px; margin:-6px 0 8px; font-size:13px; color:var(--muted, #666); justify-content:flex-start;">
-    {% if can_manage %}
-    
+  <div class="qvol-row" style="gap:14px; {{ '' if can_manage else 'display:none;' }}">
     <div id="mixVolWrap" style="display:flex; align-items:center; gap:6px; transition:opacity .2s; {{ '' if stream.mix_video_audio else 'opacity:.4;' }}">
       <span style="font-weight:500;">Video volume</span>
       <input type="range" id="mixVol" min="0" max="200" step="5" value="{{ ((stream.video_volume or 0.5) * 100) | round | int }}" style="width:110px;" {{ '' if stream.mix_video_audio else 'disabled' }}>
@@ -159,9 +155,8 @@ input:checked + .slider:before {
       <input type="range" id="musicVol" min="0" max="200" step="5" value="{{ ((stream.music_volume if stream.music_volume is not none else 1.0) * 100) | round | int }}" style="width:110px;">
       <span id="musicVolVal">{{ ((stream.music_volume if stream.music_volume is not none else 1.0) * 100) | round | int }}%</span>
     </div>
-    {% endif %}
   </div>
-  <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px 14px; margin:0 0 16px; font-size:13px;">
+  <div class="qtot-row">
     {% if can_manage %}
     <div style="display:flex; align-items:center; gap:8px; font-weight:500; color:var(--muted, #666);">
       Video sound
@@ -177,34 +172,21 @@ input:checked + .slider:before {
     </div>
   </div>
   {% else %}
-  <div style="display:flex; align-items:center; flex-wrap:wrap; gap:8px 14px; margin:-6px 0 8px; font-size:13px; color:var(--muted, #666);">
-    {% if can_manage %}
+  <div class="qvol-row" style="{{ '' if can_manage else 'display:none;' }}">
     <span style="display:flex; align-items:center; gap:6px;">
       <span style="font-weight:500;">Audio volume</span>
       <input type="range" id="streamVol" min="0" max="200" step="5" value="{{ ((stream.stream_volume if stream.stream_volume is not none else 1.0) * 100) | round | int }}" style="width:130px;">
       <span id="streamVolVal">{{ ((stream.stream_volume if stream.stream_volume is not none else 1.0) * 100) | round | int }}%</span>
     </span>
-    {% endif %}
   </div>
-  <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px 14px; margin:0 0 16px; font-size:13px;">
-    {% if can_manage %}
-    <div style="display:flex; align-items:center; gap:8px; font-weight:500; color:var(--muted, #666);">
-      Video sound
-      <label class="switch" style="vertical-align:middle">
-        <input type="checkbox" id="mixToggle" {{ 'checked' if stream.mix_video_audio else '' }}>
-        <span class="slider round"></span>
-      </label>
-    </div>
-    {% endif %}
-    <div style="display:flex; align-items:center; gap:8px 14px;">
-      {% if resolution %}<span class="qres {{ 'qres-max' if stream.quality_mode == 'quality' }}" title="{{ 'Max quality mode' if stream.quality_mode == 'quality' else 'Stream resolution' }}">{% if stream.quality_mode == 'quality' %}✦ {% endif %}{{ resolution }}</span>{% endif %}
-      <span id="queueTotals" class="muted" style="font-size:13px; font-variant-numeric:tabular-nums;">{{ totals_label }}</span>
-    </div>
+  <div class="qtot-row qtot-right">
+    {% if resolution %}<span class="qres {{ 'qres-max' if stream.quality_mode == 'quality' }}" title="{{ 'Max quality mode' if stream.quality_mode == 'quality' else 'Stream resolution' }}">{% if stream.quality_mode == 'quality' %}✦ {% endif %}{{ resolution }}</span>{% endif %}
+    <span id="queueTotals" class="muted" style="font-size:13px; font-variant-numeric:tabular-nums;">{{ totals_label }}</span>
   </div>
   {% endif %}
   <span id="settingsError" style="display:none; color:#d9534f; font-size:12px; margin:-4px 0 12px;"></span>
   {% if status.live %}
-  <p class="hint" id="liveEditHint" style="margin:-6px 0 16px">
+  <p class="hint" id="liveEditHint" style="margin:0 0 16px">
     Stream is live. Changes to the queue apply automatically at the next block, or hit <b>Apply queue now</b> above to switch immediately.
   </p>
   {% endif %}
@@ -214,14 +196,16 @@ input:checked + .slider:before {
     <li class="qitem" draggable="true" data-id="{{ v.id }}">
 
       <span class="qhandle">⠿</span>
-      <div class="qmain">
-        <span class="qname" title="{{ v.orig_name }}">{{ v.display_name }}</span>
-        <div class="nowbar" data-nowbar hidden><div class="nowbar-fill" data-nowfill></div></div>
-        <div class="qprogress" data-qprogress hidden style="height:4px; background:var(--border); border-radius:2px; margin-top:4px; overflow:hidden;"><div class="qprogress-fill" data-qprogress-fill style="height:100%; background:var(--accent, #007bff); width:0%; transition: width 0.3s;"></div></div>
-      </div>
-      <div class="qmove" title="Reorder">
-        <button type="button" class="qmove-btn" data-dir="up" aria-label="Move up">▲</button>
-        <button type="button" class="qmove-btn" data-dir="down" aria-label="Move down">▼</button>
+      <div class="qrow-top">
+        <div class="qmain">
+          <span class="qname" title="{{ v.orig_name }}">{{ v.display_name }}</span>
+          <div class="nowbar" data-nowbar hidden><div class="nowbar-fill" data-nowfill></div></div>
+          <div class="qprogress" data-qprogress hidden style="height:4px; background:var(--border); border-radius:2px; margin-top:4px; overflow:hidden;"><div class="qprogress-fill" data-qprogress-fill style="height:100%; background:var(--accent, #007bff); width:0%; transition: width 0.3s;"></div></div>
+        </div>
+        <div class="qmove" title="Reorder">
+          <button type="button" class="qmove-btn" data-dir="up" aria-label="Move up">▲</button>
+          <button type="button" class="qmove-btn" data-dir="down" aria-label="Move down">▼</button>
+        </div>
       </div>
       <div class="qmeta">
       <span class="nowtag" data-nowtag hidden>● ON AIR</span>

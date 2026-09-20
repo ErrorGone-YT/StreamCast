@@ -80,6 +80,8 @@
         <span class="muted" style="font-size:12px">scheduled</span>
       {% endif %}
 
+      {% if s.resolution %}<span class="qres {{ 'qres-max' if s.quality_mode == 'quality' }}" title="{{ 'Max quality mode' if s.quality_mode == 'quality' else 'Stream resolution' }}">{% if s.quality_mode == 'quality' %}✦ {% endif %}{{ s.resolution }}</span>{% endif %}
+
       <!-- iOS-style live switch: right = on air, left = offline -->
       {% if s.can_manage %}
       <form method="POST"
@@ -121,9 +123,8 @@
       {% if s.size_label %}<span>{{ s.size_label }}</span>{% endif %}
 
       {% if s.youtube_url %}
-        <a href="{{ s.youtube_url }}" target="_blank">YouTube ↗</a>
+        <a href="{{ s.youtube_url }}" target="_blank" class="yt-link">YouTube ↗</a>
       {% endif %}
-      {% if s.resolution %}<span class="qres {{ 'qres-max' if s.quality_mode == 'quality' }}" title="{{ 'Max quality mode' if s.quality_mode == 'quality' else 'Stream resolution' }}">{% if s.quality_mode == 'quality' %}✦ {% endif %}{{ s.resolution }}</span>{% endif %}
     </div>
 
     <div style="display:flex; gap:8px; margin-top:16px;">

@@ -625,12 +625,31 @@ html[data-theme="dark"] .topbar-menu { background: #151926; border-color: rgba(2
 .qmain { flex: 1; min-width: 0; }
 .qmeta { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-wrap: wrap; }
 .qmeta form { margin: 0; display: flex; align-items: center; }
+/* Name + ▲▼ row wrapper: transparent on desktop, real row on phones */
+.qrow-top { display: contents; }
 
 /* ---- Admin panel: per-account actions + master password form ---- */
 .user-actions { display: flex; gap: 8px; align-items: center; margin-left: auto; flex: none; flex-wrap: nowrap; }
 .user-actions form { margin: 0; display: flex; }
 .admin-pass-form { display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
 .admin-pass-form .btn { justify-content: center; margin-top: 4px; }
+
+/* ---- Stream page actions: Edit + Stop/Go live on one line, Apply below ---- */
+.page-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; margin-left: auto; }
+.page-actions .pa-row { display: flex; align-items: center; gap: 8px; }
+.page-actions form { margin: 0; }
+.page-actions .pa-apply { width: 100%; }
+.page-actions .pa-apply .btn { width: 100%; justify-content: center; }
+
+/* ---- Queue card header + control rows ---- */
+.qhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+.qhead h2 { margin: 0; }
+.qhead-side { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted, #666); }
+.qhint { display: block; font-size: 13px; margin: 0 0 10px; }
+.qnote { margin: 0 0 10px; }
+.qvol-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; margin: 0 0 8px; font-size: 13px; color: var(--muted, #666); }
+.qtot-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 14px; margin: 0 0 16px; font-size: 13px; }
+.qtot-row.qtot-right { justify-content: flex-end; }
 
 /* Touch-friendly queue reorder buttons (mobile only) */
 .qmove { display: none; }
@@ -645,16 +664,23 @@ html[data-theme="dark"] .topbar-menu { background: #151926; border-color: rgba(2
 @media (max-width: 640px) {
   .card { padding: 16px; }
 
-  /* Stream page: action buttons stacked top-right, next to name/status */
+  /* Stream page: action block stays top-right, next to name/status */
   .page-head.stream-head { flex-direction: row; align-items: flex-start; justify-content: space-between; gap: 10px; }
-  .stream-head .page-actions { margin-left: auto; flex-direction: column; align-items: stretch; gap: 8px; }
 
-  /* Queue rows: name + ▲▼ on line 1, slim badges line under it */
+  /* ON AIR tag pinned to the left edge of the badges line */
+  .qmeta .nowtag { margin-right: auto; }
+
+  /* YouTube link on tiles: own line, centered (phones only) */
+  .stream-meta .yt-link { flex-basis: 100%; text-align: center; margin-top: 2px; }
+
+  /* Queue rows: name + ▲▼ share one centered line, badges line under it */
   .qitem { flex-wrap: wrap; gap: 7px 8px; padding: 6px 12px; }
   .qitem .qhandle { display: none; }  /* drag dots unused on phones — ▲▼ buttons instead */
-  .qmain { flex: 1 1 auto; min-width: 0; }
+  .qrow-top { display: flex; align-items: center; gap: 8px; flex-basis: 100%; min-width: 0; max-width: 100%; }
+  /* flex-basis 0 + overflow:hidden so long nowrap names can never push the ▲▼ away */
+  .qmain { flex: 1 1 0; min-width: 0; overflow: hidden; }
   .qname { font-size: 13.5px; }
-  .qmove { display: flex; flex-direction: column; gap: 3px; flex: none; margin-left: auto; }
+  .qmove { display: flex; flex-direction: column; gap: 3px; flex: none; margin-left: 0; }
   .qmeta {
     flex-basis: 100%;
     margin-left: 0;
