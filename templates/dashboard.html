@@ -2,6 +2,10 @@
 {% block title %}Streams — StreamCast{% endblock %}
 
 {% block body %}
+<script>
+  // Apply the saved thumbnail preference before the grid paints (no flash).
+  try { if (localStorage.getItem('sc-thumbs') === '0') document.body.classList.add('no-thumbs'); } catch (e) {}
+</script>
 <div class="page-head">
   <div>
     <h1>Your streams</h1>
@@ -60,6 +64,14 @@
       outline:none;
     "
   >
+
+  <label class="thumb-toggle" title="Show or hide stream thumbnails">
+    🖼 Thumbnails
+    <span class="switch">
+      <input type="checkbox" id="thumbToggle" checked>
+      <span class="slider round"></span>
+    </span>
+  </label>
 
 </div>
 
@@ -358,6 +370,15 @@ document.getElementById('filterReset').addEventListener('click', function() {
 
 document.getElementById('stream-search')
   .addEventListener('input', updateStreams);
+
+// Thumbnails toggle: remember the choice, collapse tiles when off.
+const thumbToggle = document.getElementById('thumbToggle');
+function applyThumbs(show) {
+  document.body.classList.toggle('no-thumbs', !show);
+  try { localStorage.setItem('sc-thumbs', show ? '1' : '0'); } catch (e) {}
+}
+try { thumbToggle.checked = localStorage.getItem('sc-thumbs') !== '0'; } catch (e) {}
+thumbToggle.addEventListener('change', () => applyThumbs(thumbToggle.checked));
 
 updateStreams();
 </script>

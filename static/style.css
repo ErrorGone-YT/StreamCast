@@ -654,6 +654,29 @@ html[data-theme="dark"] .topbar-menu { background: #151926; border-color: rgba(2
 .disk-bar-fill.low { background: linear-gradient(90deg, #ff5a70, var(--live)); }
 .disk-label { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
+/* ---- iOS-style toggle switch (shuffle, video sound, thumbnails) ---- */
+.switch { position: relative; display: inline-block; width: 34px; height: 20px; flex: none; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider {
+  position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+  background-color: var(--border-strong); transition: .4s; border-radius: 34px;
+}
+.slider:before {
+  position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px;
+  background-color: white; transition: .4s; border-radius: 50%;
+}
+input:checked + .slider { background-color: var(--accent, #007bff); }
+input:checked + .slider:before { transform: translateX(14px); }
+
+/* Thumbnails toggle: when off, drop the preview blocks and collapse the tiles */
+.thumb-toggle {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 600; color: var(--text-2);
+  cursor: pointer; user-select: none; white-space: nowrap;
+}
+.no-thumbs .tile-thumb { display: none; }
+.no-thumbs .stream-card .name { margin-top: 0; }
+
 /* ---- Queue card header + control rows ---- */
 .qhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
 .qhead h2 { margin: 0; }
