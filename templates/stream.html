@@ -203,7 +203,7 @@
 
 {% if can_manage %}
 <dialog id="previewDlg" class="preview-dlg">
-  <video id="previewPlayer" controls autoplay></video>
+  <video id="previewPlayer" controls></video>
   <div class="preview-foot">
     <span id="previewName" class="muted"></span>
     <button type="button" class="btn btn-sm" id="previewClose">Close</button>
@@ -649,6 +649,7 @@ if (qselects.length) {
     const ids = [...document.querySelectorAll('.qselect:checked')].map(cb => +cb.dataset.id);
     if (!ids.length) return;
     if (!confirm(`Delete ${ids.length} selected file(s)? This cannot be undone.`)) return;
+    stopPreviewIfOpen();  // release file handles so Windows lets the server delete them
     try {
       const res = await fetch(`/videos/delete/${streamId}`, {
         method: 'POST',
@@ -679,11 +680,24 @@ if (previewDlg) {
       document.getElementById('previewName').textContent = btn.dataset.name || '';
       player.src = `/video/file/${btn.dataset.video}`;
       previewDlg.showModal();
+      // Explicit play() inside the click handler carries user activation, so
+      // browsers allow sound; the autoplay attribute alone starts muted.
+      player.muted = false;
+      player.volume = 1;
+      player.play().catch(() => {
+        // Autoplay with sound rejected — start muted rather than not at all.
+        player.muted = true;
+        player.play().catch(() => {});
+      });
     });
   });
   const stopPreview = () => { player.pause(); player.removeAttribute('src'); player.load(); };
   document.getElementById('previewClose').addEventListener('click', () => previewDlg.close());
   previewDlg.addEventListener('close', stopPreview);
+  // Per-row ✕ deletes submit through forms — release the file handle first
+  // (Windows can't delete a file while a player still holds it open).
+  window.stopPreviewIfOpen = () => { if (previewDlg.open) { stopPreview(); previewDlg.close(); } };
+  queue.addEventListener('submit', () => stopPreviewIfOpen(), true);
 }
 
 // --- Live polling: encode statuses + stream live state ---

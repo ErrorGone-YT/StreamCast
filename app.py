@@ -618,12 +618,26 @@ def stream_schedule(stream_id):
 
 
 # --- Upload / delete video --------------------------------------------------
+def _unlink_retry(path, attempts=3, delay=0.4):
+    """Windows: a file with an open handle (e.g. an open preview player) can't
+    be unlinked — retry briefly, then give up so the row still goes away
+    (the startup sweep will clean the orphaned file later)."""
+    for _ in range(attempts):
+        try:
+            path.unlink(missing_ok=True)
+            return True
+        except PermissionError:
+            time.sleep(delay)
+    logging.getLogger("streamcast").warning("Could not delete %s (file in use)", path)
+    return False
+
+
 def _remove_video_files(video):
     if video["stored_name"]:
-        (config.UPLOAD_DIR / video["stored_name"]).unlink(missing_ok=True)
+        _unlink_retry(config.UPLOAD_DIR / video["stored_name"])
     if video["encoded_name"]:
-        (config.ENCODED_DIR / video["encoded_name"]).unlink(missing_ok=True)
-        _thumb_path(video["encoded_name"]).unlink(missing_ok=True)
+        _unlink_retry(config.ENCODED_DIR / video["encoded_name"])
+        _unlink_retry(_thumb_path(video["encoded_name"]))
 
 
 @app.route("/upload/<int:stream_id>", methods=["POST"])
@@ -675,13 +689,14 @@ def video_set_loop(video_id):
 
 
 def _delete_video_row(video):
-    """Terminate a running encode, clear loop references, remove files and row."""
+    """Terminate a running encode, clear loop references, delete the row and
+    remove files (best effort — the startup sweep cleans any orphans)."""
     terminate_job(video["id"])
     stream = db.get_stream(video["stream_id"])
     if stream and "loop_video_id" in stream.keys() and stream["loop_video_id"] == video["id"]:
         db.update_stream(video["stream_id"], loop_video_id=None)
-    _remove_video_files(video)
     db.delete_video(video["id"])
+    _remove_video_files(video)
 
 
 @app.route("/video/delete/<int:video_id>", methods=["POST"])
@@ -869,10 +884,37 @@ def _setup_logging():
     root.addHandler(console_h)
 
 
+def _sweep_orphan_files():
+    """Delete storage files no longer referenced by any video row — leftovers
+    from deletes that hit the Windows 'file in use' race on a previous run."""
+    referenced = set()
+    for v in db.list_all_videos():
+        if v["stored_name"]:
+            referenced.add(v["stored_name"])
+        for name in (v["encoded_name"], v["prev_encoded_name"]):
+            if name:
+                referenced.add(name)
+                referenced.add(name + ".jpg")
+    removed = 0
+    for d in (config.UPLOAD_DIR, config.ENCODED_DIR):
+        if not d.exists():
+            continue
+        for f in d.iterdir():
+            if f.is_file() and f.name not in referenced:
+                try:
+                    f.unlink(missing_ok=True)
+                    removed += 1
+                except OSError:
+                    pass
+    if removed:
+        logging.getLogger("streamcast").info("Swept %d orphaned storage file(s)", removed)
+
+
 def bootstrap():
     config.ensure_dirs()
     _setup_logging()
     db.init_db()
+    _sweep_orphan_files()
     encoder_worker.start()
     manager.start_scheduler()
     logging.getLogger("streamcast").info("StreamCast started")

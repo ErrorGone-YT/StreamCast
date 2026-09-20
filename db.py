@@ -276,6 +276,10 @@ def list_videos(stream_id):
             (stream_id,),
         ).fetchall()
 
+def list_all_videos():
+    with get_db() as db:
+        return db.execute("SELECT * FROM videos").fetchall()
+
 def list_ready_videos(stream_id, kind=None):
     """Completed files in play order — this is the actual 24/7 playlist."""
     query = ("SELECT * FROM videos WHERE stream_id = ? AND status = 'completed'")
