@@ -20,6 +20,9 @@
          style="width: {{ disk.used_pct }}%;"></div>
   </div>
   <span class="disk-label">{{ '%.1f'|format(disk.free_gb) }} GB free of {{ '%.1f'|format(disk.total_gb) }} GB</span>
+  {% if encoding_count %}
+  <span class="encode-chip" title="Files being normalized right now">🎞 {{ encoding_count }} encoding</span>
+  {% endif %}
 </div>
 
 {% if streams %}

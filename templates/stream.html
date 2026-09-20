@@ -148,10 +148,19 @@
   {% endif %}
   {% if videos %}
   <span id="queueHint" class="muted qhint">Drag rows to reorder — this is the play order</span>
+  {% if u_role == 'admin' %}
+  <div id="batchBar" class="batch-bar" hidden>
+    <span id="batchCount"></span>
+    <button type="button" class="btn btn-sm btn-danger" id="batchDeleteBtn">Delete selected</button>
+  </div>
+  {% endif %}
   <ul class="queue" id="queue" data-stream="{{ stream.id }}">
     {% for v in videos %}
     <li class="qitem" data-id="{{ v.id }}">
 
+      {% if u_role == 'admin' %}
+      <input type="checkbox" class="qselect" data-id="{{ v.id }}" aria-label="Select file for deletion">
+      {% endif %}
       <span class="qhandle" title="Drag to reorder">⠿</span>
       <div class="qrow-top">
         <div class="qmain">
@@ -162,6 +171,9 @@
       </div>
       <div class="qmeta">
       <span class="nowtag" data-nowtag hidden>● ON AIR</span>
+      {% if can_manage and v.status == 'completed' and v.encoded_name %}
+      <button type="button" class="qplay" data-video="{{ v.id }}" data-name="{{ v.orig_name }}" title="Preview">▶</button>
+      {% endif %}
       {% if stream.stream_type == 'music' and v.kind == 'video' %}
         {% if stream.loop_video_id == v.id %}
         <span class="pill pill-off" style="font-size:11px; white-space:nowrap">◐ LOOP BG</span>
@@ -188,6 +200,16 @@
   <div class="empty" style="padding:32px">{% if stream.stream_type == 'music' %}No audio yet. Upload audio tracks to build your 24/7 music loop.{% else %}No videos yet. Upload some above to build your 24/7 loop.{% endif %}</div>
   {% endif %}
 </div>
+
+{% if can_manage %}
+<dialog id="previewDlg" class="preview-dlg">
+  <video id="previewPlayer" controls autoplay></video>
+  <div class="preview-foot">
+    <span id="previewName" class="muted"></span>
+    <button type="button" class="btn btn-sm" id="previewClose">Close</button>
+  </div>
+</dialog>
+{% endif %}
 
 <!-- Schedule -->
 <div class="card">
@@ -617,6 +639,52 @@ function fitQueueNames() {
 fitQueueNames();
 window.addEventListener('resize', fitQueueNames);
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitQueueNames);  // re-measure after the webfont swaps in
+
+// --- Batch selection & delete (admins) ---
+const qselects = document.querySelectorAll('.qselect');
+if (qselects.length) {
+  const bar = document.getElementById('batchBar');
+  const count = document.getElementById('batchCount');
+  document.getElementById('batchDeleteBtn').addEventListener('click', async () => {
+    const ids = [...document.querySelectorAll('.qselect:checked')].map(cb => +cb.dataset.id);
+    if (!ids.length) return;
+    if (!confirm(`Delete ${ids.length} selected file(s)? This cannot be undone.`)) return;
+    try {
+      const res = await fetch(`/videos/delete/${streamId}`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
+        body: JSON.stringify({ ids })
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      window.location.reload();
+    } catch (e) {
+      console.error('Batch delete failed', e);
+      showSettingsError('Failed to delete selected files');
+    }
+  });
+  const updateBar = () => {
+    const n = document.querySelectorAll('.qselect:checked').length;
+    bar.hidden = n === 0;
+    count.textContent = n + ' selected';
+  };
+  qselects.forEach(cb => cb.addEventListener('change', updateBar));
+}
+
+// --- Mini preview player (owner only) ---
+const previewDlg = document.getElementById('previewDlg');
+if (previewDlg) {
+  const player = document.getElementById('previewPlayer');
+  document.querySelectorAll('.qplay').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.getElementById('previewName').textContent = btn.dataset.name || '';
+      player.src = `/video/file/${btn.dataset.video}`;
+      previewDlg.showModal();
+    });
+  });
+  const stopPreview = () => { player.pause(); player.removeAttribute('src'); player.load(); };
+  document.getElementById('previewClose').addEventListener('click', () => previewDlg.close());
+  previewDlg.addEventListener('close', stopPreview);
+}
 
 // --- Live polling: encode statuses + stream live state ---
 async function poll() {

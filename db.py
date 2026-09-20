@@ -314,6 +314,13 @@ def delete_video(video_id):
     with get_db() as db:
         db.execute("DELETE FROM videos WHERE id = ?", (video_id,))
 
+def count_encoding_videos():
+    """Files currently queued for / being normalized (dashboard chip)."""
+    with get_db() as db:
+        return db.execute(
+            "SELECT COUNT(*) c FROM videos WHERE status IN ('waiting_encode', 'encoding')"
+        ).fetchone()["c"]
+
 def reorder_videos(stream_id, ordered_ids):
     with get_db() as db:
         for pos, vid in enumerate(ordered_ids):

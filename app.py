@@ -438,7 +438,8 @@ def dashboard():
         "total_gb": usage.total / 1024 ** 3,
         "used_pct": round(100 * usage.used / usage.total, 1) if usage.total else 0,
     }
-    return render_template("dashboard.html", streams=streams, disk=disk)
+    return render_template("dashboard.html", streams=streams, disk=disk,
+                           encoding_count=db.count_encoding_videos())
 
 
 # --- Stream CRUD -------------------------------------------------------------
@@ -673,6 +674,16 @@ def video_set_loop(video_id):
     return redirect(url_for("stream_detail", stream_id=video["stream_id"]))
 
 
+def _delete_video_row(video):
+    """Terminate a running encode, clear loop references, remove files and row."""
+    terminate_job(video["id"])
+    stream = db.get_stream(video["stream_id"])
+    if stream and "loop_video_id" in stream.keys() and stream["loop_video_id"] == video["id"]:
+        db.update_stream(video["stream_id"], loop_video_id=None)
+    _remove_video_files(video)
+    db.delete_video(video["id"])
+
+
 @app.route("/video/delete/<int:video_id>", methods=["POST"])
 @login_required
 def video_delete(video_id):
@@ -683,19 +694,47 @@ def video_delete(video_id):
     # but never remove the files themselves.
     if current_role() != "admin":
         abort(403)
-
-    # Stop a running encode via the in-memory job registry — the DB-stored
-    # encode_pid may be stale (OS PID reuse) and must never be killed blindly.
-    terminate_job(video_id)
-
-    # Clear the music stream's background if its loop video is being deleted.
-    stream = db.get_stream(video["stream_id"])
-    if stream and "loop_video_id" in stream.keys() and stream["loop_video_id"] == video_id:
-        db.update_stream(video["stream_id"], loop_video_id=None)
-
-    _remove_video_files(video)
-    db.delete_video(video_id)
+    _delete_video_row(video)
     return redirect(url_for("stream_detail", stream_id=video["stream_id"]))
+
+
+@app.route("/videos/delete/<int:stream_id>", methods=["POST"])
+@login_required
+@ajax_required
+def videos_delete_batch(stream_id):
+    """Batch delete selected queue files (admins only)."""
+    stream = db.get_stream(stream_id)
+    if not stream:
+        abort(404)
+    if current_role() != "admin":
+        abort(403)
+    data = request.get_json(silent=True) or {}
+    try:
+        ids = [int(i) for i in data.get("ids", [])]
+    except (TypeError, ValueError):
+        ids = []
+    deleted = 0
+    for vid in ids:
+        video = db.get_video(vid)
+        if video and video["stream_id"] == stream_id:
+            _delete_video_row(video)
+            deleted += 1
+    return jsonify({"ok": True, "deleted": deleted})
+
+
+@app.route("/video/file/<int:video_id>")
+@login_required
+def video_file(video_id):
+    """Owner-only preview player for the normalized file (no YouTube needed)."""
+    video = db.get_video(video_id)
+    if not video or not video["encoded_name"]:
+        abort(404)
+    _owned_stream(video["stream_id"])
+    path = config.ENCODED_DIR / video["encoded_name"]
+    if not path.exists():
+        abort(404)
+    mime = "audio/mpeg" if video["kind"] == "audio" else "video/mp4"
+    return send_file(path, mimetype=mime, conditional=True)
 
 
 # --- JSON API (live polling) ------------------------------------------------

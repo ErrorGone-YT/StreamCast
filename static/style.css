@@ -652,6 +652,11 @@ html[data-theme="dark"] .topbar-menu { background: #151926; border-color: rgba(2
 .disk-bar-fill.warn { background: linear-gradient(90deg, #fbbf24, #f59e0b); }
 .disk-bar-fill.low { background: linear-gradient(90deg, #ff5a70, var(--live)); }
 .disk-label { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.encode-chip {
+  font-size: 12px; font-weight: 600; color: var(--accent);
+  background: rgba(109,135,255,.10); padding: 3px 10px;
+  border-radius: 999px; white-space: nowrap;
+}
 
 /* ---- iOS-style toggle switch (shuffle, video sound, thumbnails) ---- */
 .switch { position: relative; display: inline-block; width: 34px; height: 20px; flex: none; }
@@ -675,6 +680,27 @@ input:checked + .slider:before { transform: translateX(14px); }
 }
 .no-thumbs .tile-thumb { display: none; }
 .no-thumbs .stream-card .name { margin-top: 0; }
+
+/* ---- Batch select & mini preview (queue) ---- */
+.qselect { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; flex: none; }
+.batch-bar { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; font-size: 13px; color: var(--muted); }
+.qplay {
+  width: 26px; height: 26px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border-strong); border-radius: 6px;
+  background: var(--surface); color: var(--accent); cursor: pointer; padding: 0; font-size: 11px;
+  transition: border-color .15s var(--ease), color .15s var(--ease);
+}
+.qplay:hover { border-color: var(--accent); }
+.preview-dlg {
+  border: 1px solid var(--border-strong); border-radius: 14px;
+  padding: 14px; background: var(--surface); color: var(--text);
+  max-width: min(720px, 92vw);
+}
+.preview-dlg::backdrop { background: rgba(0,0,0,.55); }
+.preview-dlg video { width: 100%; max-height: 60vh; border-radius: 8px; background: #000; }
+.preview-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
+.preview-foot span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---- Queue card header + control rows ---- */
 .qhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
