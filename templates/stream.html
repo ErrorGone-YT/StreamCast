@@ -64,11 +64,11 @@ input:checked + .slider:before {
     {% if can_manage %}
     <a href="{{ url_for('stream_edit', stream_id=stream.id) }}" class="btn" style="width:auto; justify-content:center;">Edit</a>
     {% if status.live %}
-      <form method="post" action="{{ url_for('stream_apply', stream_id=stream.id) }}" style="margin:0;">
-        <button class="btn" title="Rebuild the broadcast from the current queue right now" style="width:auto;">↻ Apply queue now</button>
-      </form>
       <form method="post" action="{{ url_for('stream_stop', stream_id=stream.id) }}" style="margin:0;">
         <button class="btn btn-danger" style="width:auto;">■ Stop</button>
+      </form>
+      <form method="post" action="{{ url_for('stream_apply', stream_id=stream.id) }}" style="margin:0;">
+        <button class="btn" title="Rebuild the broadcast from the current queue right now" style="width:auto;">↻ Apply queue now</button>
       </form>
     {% else %}
       <form method="post" action="{{ url_for('stream_start', stream_id=stream.id) }}" style="margin:0;">
@@ -149,9 +149,9 @@ input:checked + .slider:before {
   <div style="display:flex; align-items:center; flex-wrap:wrap; gap:14px; margin:-6px 0 8px; font-size:13px; color:var(--muted, #666); justify-content:flex-start;">
     {% if can_manage %}
     
-    <div style="display:flex; align-items:center; gap:6px; {{ '' if stream.mix_video_audio else 'visibility:hidden;' }}">
+    <div id="mixVolWrap" style="display:flex; align-items:center; gap:6px; transition:opacity .2s; {{ '' if stream.mix_video_audio else 'opacity:.4;' }}">
       <span style="font-weight:500;">Video volume</span>
-      <input type="range" id="mixVol" min="0" max="200" step="5" value="{{ ((stream.video_volume or 0.5) * 100) | round | int }}" style="width:110px;">
+      <input type="range" id="mixVol" min="0" max="200" step="5" value="{{ ((stream.video_volume or 0.5) * 100) | round | int }}" style="width:110px;" {{ '' if stream.mix_video_audio else 'disabled' }}>
       <span id="mixVolVal">{{ ((stream.video_volume or 0.5) * 100) | round | int }}%</span>
     </div>
     <div style="display:flex; align-items:center; gap:6px;">
@@ -485,9 +485,8 @@ if (shuffleToggle) {
   };
 }
 
-// --- Video sound (music stream mixing) ---
+// --- Video sound toggle: enables/disables the Video volume slider ---
 const mixToggle = document.getElementById('mixToggle');
-const mixVolWrap = document.getElementById('mixVolWrap');
 const mixVol = document.getElementById('mixVol');
 const mixVolVal = document.getElementById('mixVolVal');
 
@@ -507,11 +506,14 @@ async function sendMixSettings() {
   }
 }
 
-if (mixToggle && mixVolWrap) {
-  mixToggle.onchange = () => {
-    mixVolWrap.style.visibility = mixToggle.checked ? 'visible' : 'hidden';
-    sendMixSettings();
+if (mixToggle) {
+  const mixVolWrap = document.getElementById('mixVolWrap');
+  const applyMixState = () => {
+    if (mixVol) mixVol.disabled = !mixToggle.checked;
+    if (mixVolWrap) mixVolWrap.style.opacity = mixToggle.checked ? '1' : '.4';
   };
+  applyMixState();  // sync on load in case the slider starts disabled
+  mixToggle.onchange = () => { applyMixState(); sendMixSettings(); };
 }
 if (mixVol && mixVolVal) {
   mixVol.oninput = () => { mixVolVal.textContent = mixVol.value + '%'; };
