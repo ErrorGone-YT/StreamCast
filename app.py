@@ -9,6 +9,7 @@ import time
 import uuid
 from functools import wraps
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from flask import (
     Flask, abort, flash, g, jsonify, redirect, render_template,
@@ -162,9 +163,47 @@ def _hydrate_media_meta(v):
 app = Flask(__name__)
 app.config["SECRET_KEY"] = config.SECRET_KEY
 app.config["MAX_CONTENT_LENGTH"] = config.MAX_UPLOAD_MB * 1024 * 1024
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+# SESSION_COOKIE_SECURE is toggled per request by _harden_session_cookie()
+# below: on over plain HTTP it stays off so LAN/localhost logins work, and
+# flips on automatically as soon as the request arrived over HTTPS.
 # Reload templates on change so UI edits show up without a restart.
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
+
+
+def _client_ip():
+    """Best-effort client IP for logging and brute-force throttling.
+    X-Real-IP is stamped by the documented nginx snippet from $remote_addr,
+    CF-Connecting-IP by Cloudflare; both can't be forged through the proxy."""
+    return (request.headers.get("X-Real-IP")
+            or request.headers.get("CF-Connecting-IP")
+            or request.remote_addr or "?")
+
+
+@app.before_request
+def _harden_session_cookie():
+    app.config["SESSION_COOKIE_SECURE"] = (
+        request.is_secure or request.headers.get("X-Forwarded-Proto") == "https"
+    )
+
+
+@app.before_request
+def _reject_cross_origin_posts():
+    """CSRF guard for form POSTs (the JSON APIs already use ajax_required).
+    Browsers always attach Origin/Referer on cross-site POSTs, so only a
+    mismatched header is proof of an attack; requests with neither header
+    (curl, scripts, API clients) are allowed through."""
+    if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+        return None
+    for header in ("Origin", "Referer"):
+        val = request.headers.get(header)
+        if not val:
+            continue
+        if urlsplit(val).netloc != request.host:
+            abort(400)
+        return None
+    return None
 
 
 def _fmt_hms(seconds):
@@ -281,6 +320,41 @@ def _inject_user():
     return {"u_id": uid, "u_role": role}
 
 
+# Brute-force throttle for password entry: 5 bad attempts put the client IP on
+# a timeout that doubles with every further failure (30s ... 15 min). In-memory
+# only — resetting on restart is fine, this is a speed bump, not an audit log.
+_LOGIN_FAILS = {}  # ip -> {"fails": n, "until": monotonic}
+_LOGIN_LOCK_THRESHOLD = 5
+_LOGIN_LOCK_BASE = 30       # seconds
+_LOGIN_LOCK_CAP = 15 * 60
+
+
+def _login_lock_remaining():
+    rec = _LOGIN_FAILS.get(_client_ip())
+    if not rec:
+        return 0
+    left = rec["until"] - time.monotonic()
+    return max(0, left)
+
+
+def _login_record_fail():
+    ip = _client_ip()
+    rec = _LOGIN_FAILS.setdefault(ip, {"fails": 0, "until": 0.0})
+    rec["fails"] += 1
+    if rec["fails"] >= _LOGIN_LOCK_THRESHOLD:
+        delay = min(_LOGIN_LOCK_CAP,
+                    _LOGIN_LOCK_BASE * 2 ** (rec["fails"] - _LOGIN_LOCK_THRESHOLD))
+        rec["until"] = time.monotonic() + delay
+    if len(_LOGIN_FAILS) > 10000:  # keep the table bounded
+        cutoff = time.monotonic()
+        for k in [k for k, v in _LOGIN_FAILS.items() if v["until"] < cutoff]:
+            _LOGIN_FAILS.pop(k, None)
+
+
+def _login_record_success():
+    _LOGIN_FAILS.pop(_client_ip(), None)
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if session.get("authed"):
@@ -289,8 +363,13 @@ def login():
     if not nxt.startswith("/"):
         nxt = url_for("dashboard")
     if request.method == "POST":
+        wait = _login_lock_remaining()
+        if wait:
+            flash(f"Too many attempts — try again in {int(wait // 60) + 1} min", "error")
+            return render_template("login.html"), 429
         pw = request.form.get("password", "")
         if _check_master_password(pw):
+            _login_record_success()
             session["authed"] = True
             session["user_id"] = None
             session["role"] = "admin"
@@ -298,11 +377,13 @@ def login():
             return redirect(nxt)
         user = db.find_user_by_password(pw, check_password_hash)
         if user:
+            _login_record_success()
             session["authed"] = True
             session["user_id"] = user["id"]
             session["role"] = user["role"]
             session.permanent = True
             return redirect(nxt)
+        _login_record_fail()
         flash("Wrong password", "error")
     return render_template("login.html")
 
