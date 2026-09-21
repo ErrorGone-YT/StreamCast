@@ -333,7 +333,6 @@ if (uploadForm) {
 
     const uploadPromises = files.map(async (file, index) => {
       const row = document.createElement('div');
-      // FIXED: Removed the gap:10px and replaced it with structured margins/paddings to ensure stability
       row.style.cssText = 'display:flex; align-items:center; font-size:13px; padding:8px; background:var(--surface-2); border-radius:4px; border:1px solid var(--border);';
       row.innerHTML = `
         <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-right:10px;">${file.name}</span>
@@ -363,8 +362,7 @@ if (uploadForm) {
           xhr.abort();
           row.style.opacity = '0.5';
           pText.textContent = 'Canceled';
-          // FIX: Instead of display:none, use visibility:hidden to keep the element in the DOM
-          // and preserve the space it occupies, keeping other elements in place.
+          // visibility (not display:none) keeps the row layout stable after cancel
           cancelBtn.style.visibility = 'hidden';
           activeUploads.delete(fileKey);
           resolve();

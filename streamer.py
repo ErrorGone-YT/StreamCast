@@ -32,7 +32,7 @@ def _has_audio_stream(path):
         out = subprocess.check_output(
             [config.FFPROBE, "-v", "error", "-select_streams", "a:0",
              "-show_entries", "stream=index", "-of", "csv=p=0", str(path)],
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
         )
         return bool(out.strip())
     except Exception:
@@ -308,6 +308,7 @@ class _Runner:
         self.proc = subprocess.Popen(
             self._ffmpeg_cmd(stream),
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+            encoding="utf-8", errors="replace",
         )
         threading.Thread(target=self._drain_stderr, daemon=True).start()
         self._block_started = time.monotonic()

@@ -40,15 +40,25 @@ ENCODED_DIR = STORAGE_DIR / "encoded"     # normalized, ready-to-stream files
 DB_PATH = Path(_env("STREAMCAST_DB", str(STORAGE_DIR / "streamcast.db")))
 
 # --- Auth (single owner, no registration) -----------------------------------
-# Login page checks this single password. Change it before exposing the app!
+# Login page checks this single password. On first start with the default
+# value the app shows a one-time setup screen asking for a new password.
 OWNER_PASSWORD = _env("STREAMCAST_PASSWORD", "changeme")
 SECRET_KEY = _env("STREAMCAST_SECRET", "dev-secret-change-me")
 
-# Set STREAMCAST_REQUIRE_LOGIN=1 to turn the password back on. Off by default,
-# so the panel opens straight to the dashboard with no login screen.
-# WARNING: leave this OFF only on a private/local machine. Anyone who can reach
-# the URL gets full control (and your stream keys) when login is disabled.
+# Set STREAMCAST_REQUIRE_LOGIN=1 to always require the password. It is also
+# turned on automatically (and stored in the DB) by the first-start setup.
+# With login not required anonymous visitors can look around read-only; every
+# mutating action still needs a signed-in account.
 REQUIRE_LOGIN = _env("STREAMCAST_REQUIRE_LOGIN", "0") == "1"
+
+# Trust X-Real-IP / CF-Connecting-IP / X-Forwarded-Proto headers from a reverse
+# proxy (nginx, Cloudflare). Leave on when the app sits behind a proxy; set 0
+# when it is exposed directly, or clients could spoof these headers.
+TRUST_PROXY = _env("STREAMCAST_TRUST_PROXY", "1") == "1"
+
+# Where the dev server binds (gunicorn users set their own -b instead).
+HOST = _env("STREAMCAST_HOST", "127.0.0.1")
+PORT = int(_env("STREAMCAST_PORT", "5000"))
 
 # --- Streaming --------------------------------------------------------------
 # Default YouTube ingest endpoint. Users only paste their stream KEY in the UI.

@@ -174,18 +174,32 @@ app.jinja_env.auto_reload = True
 
 def _client_ip():
     """Best-effort client IP for logging and brute-force throttling.
-    X-Real-IP is stamped by the documented nginx snippet from $remote_addr,
-    CF-Connecting-IP by Cloudflare; both can't be forged through the proxy."""
-    return (request.headers.get("X-Real-IP")
-            or request.headers.get("CF-Connecting-IP")
-            or request.remote_addr or "?")
+    Proxied headers are only honored behind a reverse proxy (STREAMCAST_TRUST_PROXY);
+    exposed directly they could be spoofed to dodge the login throttle."""
+    if config.TRUST_PROXY:
+        return (request.headers.get("X-Real-IP")
+                or request.headers.get("CF-Connecting-IP")
+                or request.remote_addr or "?")
+    return request.remote_addr or "?"
 
 
 @app.before_request
 def _harden_session_cookie():
-    app.config["SESSION_COOKIE_SECURE"] = (
-        request.is_secure or request.headers.get("X-Forwarded-Proto") == "https"
-    )
+    secure = request.is_secure
+    if not secure and config.TRUST_PROXY:
+        secure = request.headers.get("X-Forwarded-Proto") == "https"
+    app.config["SESSION_COOKIE_SECURE"] = secure
+
+
+@app.before_request
+def _force_first_start_setup():
+    """Fresh install with the default password: walk the owner through creating
+    a real admin password before anything else is reachable."""
+    if request.endpoint in ("setup", "static"):
+        return None
+    if _setup_pending():
+        return redirect(url_for("setup"))
+    return None
 
 
 @app.before_request
@@ -223,8 +237,9 @@ app.jinja_env.filters["hms"] = _fmt_hms
 #   admin  — full rights (created in the admin panel, rarely needed)
 #   worker — can create streams and manage only the ones they created
 #   viewer — read-only
-# With REQUIRE_LOGIN=0 anonymous visitors act as the admin everywhere, except
-# the /admin panel itself, which always asks for an explicit master login.
+# With login not required (STREAMCAST_REQUIRE_LOGIN unset and setup not done)
+# anonymous visitors can look around read-only; mutations need an account.
+# The /admin panel always asks for an explicit master login.
 ROLES = ("admin", "worker", "viewer")
 
 
@@ -233,6 +248,18 @@ def _check_master_password(password):
     if stored:
         return check_password_hash(stored, password)
     return password == config.OWNER_PASSWORD
+
+
+def _setup_pending():
+    """True until the owner replaces the default master password: no DB-stored
+    hash yet and the environment still carries the shipped default."""
+    return (db.get_setting("master_password_hash") is None
+            and config.OWNER_PASSWORD == "changeme")
+
+
+def _require_login():
+    """Login wall: the env flag, or the flag stored by first-start setup."""
+    return config.REQUIRE_LOGIN or db.get_setting("require_login") == "1"
 
 
 def current_user():
@@ -246,7 +273,7 @@ def current_user():
         if uid is not None and not db.get_user(uid):
             # Account deleted while the session was alive — treat as logged out.
             uid = role = None
-    elif not config.REQUIRE_LOGIN:
+    elif not _require_login():
         # Open access = read-only: anonymous visitors can look around,
         # but everything that mutates needs a signed-in account.
         role = "viewer"
@@ -355,12 +382,40 @@ def _login_record_success():
     _LOGIN_FAILS.pop(_client_ip(), None)
 
 
+@app.route("/setup", methods=["GET", "POST"])
+def setup():
+    """One-time first-start screen: create the admin password."""
+    if not _setup_pending():
+        return redirect(url_for("dashboard"))
+    if request.method == "POST":
+        pw = request.form.get("password", "")
+        confirm = request.form.get("confirm", "")
+        if len(pw) < 8:
+            flash("Password must be at least 8 characters", "error")
+        elif pw != confirm:
+            flash("Passwords do not match", "error")
+        elif pw == "changeme":
+            flash("Please pick something other than the default password", "error")
+        else:
+            db.set_setting("master_password_hash", generate_password_hash(pw))
+            db.set_setting("require_login", "1")
+            session.clear()
+            session["authed"] = True
+            session["user_id"] = None
+            session["role"] = "admin"
+            session.permanent = True
+            flash("Password saved — welcome to StreamCast!", "ok")
+            return redirect(url_for("dashboard"))
+    return render_template("setup.html")
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if session.get("authed"):
         return redirect(url_for("dashboard"))
     nxt = request.args.get("next") or url_for("dashboard")
-    if not nxt.startswith("/"):
+    # Only same-app paths; "//host" is protocol-relative and would leave the site.
+    if not nxt.startswith("/") or nxt.startswith("//"):
         nxt = url_for("dashboard")
     if request.method == "POST":
         wait = _login_lock_remaining()
@@ -875,7 +930,7 @@ def api_stream_status(stream_id):
     if stream:
         try:
             shuffle = bool(stream["shuffle"])
-        except:
+        except (KeyError, TypeError):
             shuffle = False
     vd, ad, sz = db.stream_totals(stream_id)
     res = {
@@ -915,8 +970,9 @@ def stream_mix(stream_id):
         db.update_stream(stream_id, **fields)
         manager.apply_now(stream_id)
         return jsonify({'status': 'ok', 'enabled': enabled})
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+    except Exception:
+        logging.getLogger("streamcast").exception("API error in %s", request.path)
+        return jsonify({'status': 'error', 'message': 'Internal error'}), 500
 
 
 @app.route('/api/stream_volume/<int:stream_id>', methods=['POST'])
@@ -935,8 +991,9 @@ def stream_volume(stream_id):
         db.update_stream(stream_id, **{field: vol / 100.0})
         manager.apply_now(stream_id)
         return jsonify({'status': 'ok', 'volume': vol})
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+    except Exception:
+        logging.getLogger("streamcast").exception("API error in %s", request.path)
+        return jsonify({'status': 'error', 'message': 'Internal error'}), 500
 
 
 @app.route("/api/reorder", methods=["POST"])
@@ -1002,6 +1059,16 @@ def bootstrap():
     config.ensure_dirs()
     _setup_logging()
     db.init_db()
+    if config.SECRET_KEY == "dev-secret-change-me":
+        # Safe default for self-hosters who never set STREAMCAST_SECRET: mint a
+        # random key once and keep it in the DB so sessions survive restarts.
+        stored = db.get_setting("session_secret")
+        if not stored:
+            stored = secrets.token_hex(32)
+            db.set_setting("session_secret", stored)
+            logging.getLogger("streamcast").info(
+                "STREAMCAST_SECRET not set — generated a random session key (stored in the DB)")
+        app.config["SECRET_KEY"] = stored
     _sweep_orphan_files()
     encoder_worker.start()
     manager.start_scheduler()
@@ -1019,10 +1086,11 @@ def toggle_shuffle(stream_id):
         db.update_stream(stream_id, shuffle=1 if enabled else 0)
         manager.apply_now(stream_id)
         return jsonify({'status': 'ok', 'shuffle': enabled})
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+    except Exception:
+        logging.getLogger("streamcast").exception("API error in %s", request.path)
+        return jsonify({'status': 'error', 'message': 'Internal error'}), 500
 bootstrap()
 
 if __name__ == "__main__":
     # Dev server. Use gunicorn in production (see README).
-    app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
+    app.run(host=config.HOST, port=config.PORT, debug=False, threaded=True)

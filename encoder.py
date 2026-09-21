@@ -9,6 +9,7 @@ A single worker thread pulls the oldest 'waiting_encode' video and processes it.
 Status transitions: waiting_encode -> encoding -> completed | error.
 """
 import json
+import re
 import subprocess
 import threading
 import time
@@ -47,7 +48,9 @@ def ffprobe_info(path):
         "-show_entries", "stream=avg_frame_rate,width,height:stream_disposition=attached_pic:format=duration",
         "-of", "json", str(path),
     ]
-    out = subprocess.check_output(cmd, text=True)
+    # utf-8 explicitly: ffmpeg always emits utf-8; on Windows the locale codec
+    # (cp1251 etc.) would choke on non-ASCII output.
+    out = subprocess.check_output(cmd, text=True, encoding="utf-8", errors="replace")
     data = json.loads(out)
     duration = float(data.get("format", {}).get("duration", 0) or 0)
     fps = 0.0
@@ -79,9 +82,10 @@ def _mode_for(video):
 
 def _transcode(video, cmd, out_path, total_duration, src_dims=(None, None), mode="balanced"):
     """Run an ffmpeg normalize job, streaming progress into the DB."""
-    import re
-
-    proc = subprocess.Popen(cmd, stderr=subprocess.PIPE, text=True, bufsize=1)
+    proc = subprocess.Popen(
+        cmd, stderr=subprocess.PIPE, text=True,
+        encoding="utf-8", errors="replace", bufsize=1,
+    )
     with _jobs_lock:
         _jobs[video["id"]] = proc
     db.update_video(video["id"], encode_pid=proc.pid)  # informational only
