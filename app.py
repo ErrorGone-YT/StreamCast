@@ -162,6 +162,14 @@ def _hydrate_media_meta(v):
 
 
 app = Flask(__name__)
+@app.route('/api/system_load')
+def api_system_load():
+    """Current system-wide CPU and RAM usage."""
+    try:
+        import psutil
+        return jsonify({'cpu': psutil.cpu_percent(interval=0.1), 'ram': psutil.virtual_memory().percent})
+    except Exception as e:
+        return jsonify({'cpu': 0, 'ram': 0, 'error': str(e)}), 500
 app.config["SECRET_KEY"] = config.SECRET_KEY
 app.config["MAX_CONTENT_LENGTH"] = config.MAX_UPLOAD_MB * 1024 * 1024
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
@@ -1162,17 +1170,7 @@ def _sweep_orphan_files():
         logging.getLogger("streamcast").info("Swept %d orphaned storage file(s)", removed)
 
 
-@app.route('/api/system_load')
 @login_required
-def api_system_load():
-    """Current system-wide CPU and RAM usage."""
-    return jsonify({
-        'cpu': psutil.cpu_percent(interval=0.1),
-        'ram': psutil.virtual_memory().percent
-    })
-
-
-
 @app.route('/admin/storage/default/<int:storage_id>', methods=['POST'])
 @login_required
 def admin_set_default_storage(storage_id):

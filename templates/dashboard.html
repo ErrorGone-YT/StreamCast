@@ -206,21 +206,43 @@
 </div>
 {% endif %}
 
+
 <script>
+// 1. SYSTEM LOAD - Highest priority, must run regardless of streams
+async function updateSystemLoad() {
+  try {
+    const res = await fetch('/api/system_load');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    const cpuVal = document.getElementById('sys-cpu-val');
+    const cpuBar = document.getElementById('sys-cpu-bar');
+    const ramVal = document.getElementById('sys-ram-val');
+    const ramBar = document.getElementById('sys-ram-bar');
+    
+    if (cpuVal) cpuVal.textContent = (data.cpu !== undefined ? data.cpu : 0) + '%';
+    if (cpuBar) {
+        cpuBar.style.width = (data.cpu || 0) + '%';
+        cpuBar.className = 'sys-bar-fill ' + (data.cpu >= 90 ? 'low' : (data.cpu >= 75 ? 'warn' : ''));
+    }
+    if (ramVal) ramVal.textContent = (data.ram !== undefined ? data.ram : 0) + '%';
+    if (ramBar) {
+        ramBar.style.width = (data.ram || 0) + '%';
+        ramBar.className = 'sys-bar-fill ' + (data.ram >= 90 ? 'low' : (data.ram >= 75 ? 'warn' : ''));
+    }
+  } catch (e) {
+    console.error('System load update failed:', e);
+  }
+}
+setInterval(updateSystemLoad, 3000);
+updateSystemLoad();
+
+// 2. BASIC UTILS
 const activeFilters = new Set();
 function fmtHMS(total) {
   total = Math.max(0, Math.floor(total));
   const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
   return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
 }
-const tileTimers = [...document.querySelectorAll('.tile-timer')].map(el => {
-  const uptime = parseFloat(el.dataset.uptime);
-  return { el, started: Date.now() / 1000 - uptime };
-});
-setInterval(() => {
-  const now = Date.now() / 1000;
-  tileTimers.forEach(t => { t.el.textContent = fmtHMS(now - t.started); });
-}, 1000);
 function replaceLast(str, from, to) {
   const i = str.lastIndexOf(from);
   return i === -1 ? str : str.slice(0, i) + to + str.slice(i + from.length);
@@ -239,13 +261,35 @@ function showFlash(message, kind) {
   stack.appendChild(toast);
   setTimeout(() => toast.remove(), kind === 'error' ? 6000 : 3500);
 }
+
+// 3. STREAM TIMERS - Safely initialized
+let tileTimers = [];
+function initTimers() {
+    try {
+        tileTimers = [...document.querySelectorAll('.tile-timer')].map(el => {
+            const uptime = parseFloat(el.dataset.uptime) || 0;
+            return { el, started: Date.now() / 1000 - uptime };
+        });
+    } catch(e) {
+        console.error('Timer init failed:', e);
+    }
+}
+initTimers();
+setInterval(() => {
+  const now = Date.now() / 1000;
+  tileTimers.forEach(t => { 
+      if (t.el) t.el.textContent = fmtHMS(now - t.started); 
+  });
+}, 1000);
+
+// 4. STREAM INTERACTION
 document.querySelectorAll('.live-switch').forEach(sw => {
   sw.closest('form').addEventListener('submit', async e => {
     e.preventDefault();
     const form = e.currentTarget;
     const card = sw.closest('.stream-card');
-    const timer = card.querySelector('.tile-timer');
-    const pill = card.querySelector('.pill');
+    const timer = card?.querySelector('.tile-timer');
+    const pill = card?.querySelector('.pill');
     const turningOn = !sw.classList.contains('on');
     sw.disabled = true;
     let data = null;
@@ -267,24 +311,29 @@ document.querySelectorAll('.live-switch').forEach(sw => {
       pill.className = 'pill ' + (turningOn ? 'pill-live' : 'pill-off');
       pill.innerHTML = '<span class="pdot"></span>' + (turningOn ? 'LIVE' : 'OFFLINE');
     }
-    card.dataset.status = turningOn ? 'live' : 'offline';
-    card.dataset.all = turningOn ? replaceLast(card.dataset.all, 'offline', 'live') : replaceLast(card.dataset.all, 'live', 'offline');
-    if (turningOn) {
+    if (card) {
+        card.dataset.status = turningOn ? 'live' : 'offline';
+        card.dataset.all = turningOn ? replaceLast(card.dataset.all, 'offline', 'live') : replaceLast(card.dataset.all, 'live', 'offline');
+    }
+    if (turningOn && timer) {
       timer.hidden = false;
       timer.dataset.uptime = '0';
       const t = tileTimers.find(t => t.el === timer);
       if (t) t.started = Date.now() / 1000;
       else tileTimers.push({ el: timer, started: Date.now() / 1000 });
-    } else {
+    } else if (timer) {
       timer.hidden = true;
     }
   });
 });
+
 function confirmDelete(name) {
   return confirm('Delete stream "' + name + '"?\n\n' + 'The stream will be stopped and all uploaded videos will be deleted.');
 }
+
 function updateStreams() {
-  const search = document.getElementById('stream-search').value.trim().toLowerCase();
+  const searchInput = document.getElementById('stream-search');
+  const search = searchInput ? searchInput.value.trim().toLowerCase() : '';
   let visible = 0;
   document.querySelectorAll('.stream-item').forEach(function(item) {
     const selected = [...activeFilters];
@@ -296,8 +345,10 @@ function updateStreams() {
     item.style.display = show ? '' : 'none';
     if (show) visible++;
   });
-  document.getElementById('no-filter-results').style.display = visible === 0 ? 'block' : 'none';
+  const resultsMsg = document.getElementById('no-filter-results');
+  if (resultsMsg) resultsMsg.style.display = visible === 0 ? 'block' : 'none';
 }
+
 document.querySelectorAll('.filter-btn[data-filter]').forEach(button => {
   button.addEventListener('click', function() {
     const f = this.dataset.filter;
@@ -311,21 +362,33 @@ document.querySelectorAll('.filter-btn[data-filter]').forEach(button => {
     updateStreams();
   });
 });
-document.getElementById('filterReset').addEventListener('click', function() {
-  activeFilters.clear();
-  document.querySelectorAll('.filter-btn.active').forEach(btn => btn.classList.remove('active'));
-  const search = document.getElementById('stream-search');
-  if (search) search.value = '';
-  updateStreams();
-});
-document.getElementById('stream-search').addEventListener('input', updateStreams);
+
+const filterReset = document.getElementById('filterReset');
+if (filterReset) {
+    filterReset.addEventListener('click', function() {
+        activeFilters.clear();
+        document.querySelectorAll('.filter-btn.active').forEach(btn => btn.classList.remove('active'));
+        const search = document.getElementById('stream-search');
+        if (search) search.value = '';
+        updateStreams();
+    });
+}
+
+const searchInput = document.getElementById('stream-search');
+if (searchInput) {
+    searchInput.addEventListener('input', updateStreams);
+}
+
 const thumbToggle = document.getElementById('thumbToggle');
 function applyThumbs(show) {
   document.body.classList.toggle('no-thumbs', !show);
   try { localStorage.setItem('sc-thumbs', show ? '1' : '0'); } catch (e) {}
 }
-try { thumbToggle.checked = localStorage.getItem('sc-thumbs') !== '0'; } catch (e) {}
-thumbToggle.addEventListener('change', () => applyThumbs(thumbToggle.checked));
+if (thumbToggle) {
+    try { thumbToggle.checked = localStorage.getItem('sc-thumbs') !== '0'; } catch (e) {}
+    thumbToggle.addEventListener('change', () => applyThumbs(thumbToggle.checked));
+}
+
 const encodeChip = document.getElementById('encodeChip');
 if (encodeChip) {
   setInterval(async () => {
@@ -339,32 +402,7 @@ if (encodeChip) {
   }, 5000);
 }
 updateStreams();
-
-async function updateSystemLoad() {
-  try {
-    const res = await fetch('/api/system_load');
-    if (!res.ok) throw new Error('HTTP error ' + res.status);
-    const data = await res.json();
-    const cpuVal = document.getElementById('sys-cpu-val');
-    const cpuBar = document.getElementById('sys-cpu-bar');
-    const ramVal = document.getElementById('sys-ram-val');
-    const ramBar = document.getElementById('sys-ram-bar');
-    if (cpuVal) cpuVal.textContent = data.cpu + '%';
-    if (cpuBar) {
-        cpuBar.style.width = data.cpu + '%';
-        cpuBar.className = 'sys-bar-fill ' + (data.cpu >= 90 ? 'low' : (data.cpu >= 75 ? 'warn' : ''));
-    }
-    if (ramVal) ramVal.textContent = data.ram + '%';
-    if (ramBar) {
-        ramBar.style.width = data.ram + '%';
-        ramBar.className = 'sys-bar-fill ' + (data.ram >= 90 ? 'low' : (data.ram >= 75 ? 'warn' : ''));
-    }
-  } catch (e) {
-    console.error('System load update failed', e);
-  }
-}
-setInterval(updateSystemLoad, 3000);
-updateSystemLoad();
 </script>
+
 
 {% endblock %}

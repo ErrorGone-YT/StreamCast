@@ -104,8 +104,14 @@ def disk_status(storage_row):
     (unplugged SSD, permissions)."""
     try:
         usage = shutil.disk_usage(root(storage_row))
-    except OSError:
+    except Exception as e:
+        import logging
+        logging.error(f"Storage {storage_row['name']} error: {e}")
         return {"ok": False, "free_gb": 0.0, "total_gb": 0.0, "used_pct": 0.0}
+    # Log disk usage for debugging second disk
+    import logging
+    logging.info(f"Disk {storage_row['name']} [{root(storage_row)}]: total={usage.total}, used={usage.used}, free={usage.free}")
+    
     return {
         "ok": True,
         "free_gb": usage.free / 1024 ** 3,
