@@ -1,5 +1,6 @@
 """StreamCast — single-owner 24/7 YouTube streaming panel."""
 import logging
+import psutil
 from logging.handlers import RotatingFileHandler
 import re
 import secrets
@@ -1159,6 +1160,16 @@ def _sweep_orphan_files():
                     pass
     if removed:
         logging.getLogger("streamcast").info("Swept %d orphaned storage file(s)", removed)
+
+
+@app.route('/api/system_load')
+@login_required
+def api_system_load():
+    """Current system-wide CPU and RAM usage."""
+    return jsonify({
+        'cpu': psutil.cpu_percent(interval=0.1),
+        'ram': psutil.virtual_memory().percent
+    })
 
 
 def bootstrap():
