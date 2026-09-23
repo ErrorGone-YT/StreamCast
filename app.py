@@ -1172,6 +1172,16 @@ def api_system_load():
     })
 
 
+
+@app.route('/admin/storage/default/<int:storage_id>', methods=['POST'])
+@login_required
+def admin_set_default_storage(storage_id):
+    if current_role() != 'admin':
+        abort(403)
+    db.set_default_storage(storage_id)
+    flash('Default storage updated', 'ok')
+    return redirect(url_for('admin'))
+
 def bootstrap():
     config.ensure_dirs()
     _setup_logging()

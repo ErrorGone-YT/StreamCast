@@ -133,22 +133,23 @@
       </div>
       <span class="disk-label">{{ '%.1f'|format(s.free_gb) }} GB free of {{ '%.1f'|format(s.total_gb) }} GB</span>
       {% else %}
-      <span class="disk-label" style="color:#d9534f;">cannot read this path</span>
+      <span class="//disk-label" style="color:#d9534f;">cannot read this path</span>
       {% endif %}
-      {% if not s.is_main %}
+      
       <div class="user-actions">
         {% if not s.is_default %}
         <form method="post" action="{{ url_for('admin_default_storage', storage_id=s.id) }}" style="margin:0; display:flex;">
           <button type="submit" class="btn" title="New uploads go here first while it has room">Make default</button>
         </form>
         {% endif %}
+        {% if not s.is_main %}
         <form method="post" action="{{ url_for('admin_delete_storage', storage_id=s.id) }}"
               style="margin:0; display:flex;"
               onsubmit="return confirm('Remove storage «{{ s.name }}» from the panel? Files on disk are not deleted.');">
           <button type="submit" class="btn" style="color:#d9534f;" title="Remove from the panel">✕</button>
         </form>
+        {% endif %}
       </div>
-      {% endif %}
     </div>
     {% endfor %}
   </div>
