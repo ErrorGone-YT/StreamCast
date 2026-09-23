@@ -24,6 +24,7 @@ from collections import deque
 
 import config
 import db
+import storage
 
 
 def _has_audio_stream(path):
@@ -102,10 +103,11 @@ class _Runner:
             for v in videos_all:
                 if v["prev_encoded_name"]:
                     try:
-                        (config.ENCODED_DIR / v["prev_encoded_name"]).unlink(missing_ok=True)
+                        storage.video_encoded_path(v, v["prev_encoded_name"]).unlink(missing_ok=True)
                     except OSError:
                         pass
-                    db.update_video(v["id"], prev_encoded_name=None, prev_encode_preset=None)
+                    db.update_video(v["id"], prev_encoded_name=None, prev_encode_preset=None,
+                                    prev_encoded_storage_id=None)
             videos_all = db.list_videos(self.stream_id)
 
         def copy_name(v):
@@ -128,7 +130,8 @@ class _Runner:
             if loop_video is None:
                 self.last_error = "No loop video selected — upload a video and set it as the background"
                 return None, [], 0.0
-            self.loop_video_path = (config.ENCODED_DIR / copy_name(loop_video)).resolve()
+            self.loop_video_path = storage.video_encoded_path(
+                loop_video, copy_name(loop_video)).resolve()
             self._mix_video_audio = bool(
                 stream["mix_video_audio"] if "mix_video_audio" in stream.keys() else False
             )
@@ -177,7 +180,9 @@ class _Runner:
                         break
             prev_ids = [v["id"] for v in cycle] if is_shuffle else None
             for v in cycle:
-                path = (config.ENCODED_DIR / v["encoded_name"]).resolve()
+                # copy_name: while a mode switch re-encodes the queue, every
+                # entry plays its previous-quality copy (uniform block).
+                path = storage.video_encoded_path(v, copy_name(v)).resolve()
                 # Use a simpler replacement to avoid JS escaping issues
                 safe_path = str(path).replace('\\', '/').replace("'", "'\\''")
                 lines.append(f"file '{safe_path}'")

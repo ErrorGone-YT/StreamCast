@@ -14,14 +14,28 @@
   <a href="{{ url_for('stream_create') }}" class="btn btn-primary">+ New stream</a>
 </div>
 
-<div class="disk-strip" title="Free space on the disk that holds storage/">
+{% for s in storages %}
+<div class="disk-strip" title="Free space on {{ s.path }}">
+  {% if storages|length > 1 or not s.is_default %}
+  <span class="disk-label" style="min-width:110px; overflow:hidden; text-overflow:ellipsis;" title="{{ s.name }}">
+    {% if s.is_default %}★ {% endif %}{{ s.name|truncate(16) }}
+  </span>
+  {% endif %}
+  {% if s.ok %}
   <div class="disk-bar">
-    <div class="disk-bar-fill {{ 'low' if disk.used_pct >= 90 else ('warn' if disk.used_pct >= 75) }}"
-         style="width: {{ disk.used_pct }}%;"></div>
+    <div class="disk-bar-fill {{ 'low' if s.used_pct >= 90 else ('warn' if s.used_pct >= 75) }}"
+         style="width: {{ s.used_pct }}%;"></div>
   </div>
-  <span class="disk-label">{{ '%.1f'|format(disk.free_gb) }} GB free of {{ '%.1f'|format(disk.total_gb) }} GB</span>
+  <span class="disk-label">{{ '%.1f'|format(s.free_gb) }} GB free of {{ '%.1f'|format(s.total_gb) }} GB</span>
+  {% else %}
+  <div class="disk-bar"><div class="disk-bar-fill low" style="width:100%;"></div></div>
+  <span class="disk-label" style="color:#d9534f;">offline — plug the disk back in</span>
+  {% endif %}
+  {% if loop.last %}
   <span id="encodeChip" class="encode-chip" title="Files being normalized right now" {% if not encoding_count %}hidden{% endif %}>🎞 {{ encoding_count }} encoding</span>
+  {% endif %}
 </div>
+{% endfor %}
 
 {% if streams %}
 

@@ -168,6 +168,7 @@ server {
         proxy_pass http://127.0.0.1:5000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;   # чтобы Secure-cookie включалась за HTTPS
         proxy_read_timeout 3600;
         proxy_request_buffering off;   # прокидывать загрузки напрямую
     }
