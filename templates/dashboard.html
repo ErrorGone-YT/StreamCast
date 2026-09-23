@@ -298,7 +298,7 @@ function updateStreams() {
   });
   document.getElementById('no-filter-results').style.display = visible === 0 ? 'block' : 'none';
 }
-document.querySelectorAll('.filter-btn[data-filter]').forEach(function(button) {
+document.querySelectorAll('.filter-btn[data-filter]').forEach(button => {
   button.addEventListener('click', function() {
     const f = this.dataset.filter;
     if (activeFilters.has(f)) {
@@ -335,7 +335,7 @@ if (encodeChip) {
       const data = await res.json();
       encodeChip.hidden = !data.count;
       encodeChip.textContent = `🎞 ${data.count} encoding`;
-    } catch (e) {}
+    } catch (e) { /* transient */ }
   }, 5000);
 }
 updateStreams();
