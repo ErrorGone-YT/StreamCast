@@ -148,6 +148,10 @@
        style="margin-top:12px">
       {{ s.name }}
     </a>
+    {% if s.channel_name %}
+    <div class="channel-name" style="font-size:13px; color:var(--muted); margin-top:4px;">📺 {{ s.channel_name }}
+    </div>
+    {% endif %}
 
     <div class="stream-meta">
       <span>

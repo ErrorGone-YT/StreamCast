@@ -189,7 +189,7 @@ def validate_new_storage(name, path_str):
         if p == other or p in other.parents or other in p.parents:
             raise StorageError(f"Path overlaps storage «{row['name']}» ({other})")
     try:
-        ensure_dirs(p)
+        ensure_dirs_at(p)
         probe = p / ".streamcast_write_test"
         probe.write_text("ok", encoding="utf-8")
         probe.unlink()

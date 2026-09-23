@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS streams (
     music_volume  REAL DEFAULT 1.0,       -- music: playlist audio level (0..2)
     stream_volume REAL DEFAULT 1.0,       -- video: playback audio level (0..2)
     quality_mode  TEXT DEFAULT 'balanced', -- 'quality' | 'balanced' | 'performance'
-    last_error    TEXT DEFAULT ''          -- why the last session ended (survives restarts)
+    last_error    TEXT DEFAULT '',          -- why the last session ended (survives restarts)
+    channel_name TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS videos (
@@ -122,6 +123,10 @@ def migrate_db():
         except sqlite3.OperationalError:
             pass
         try:
+            db.execute("ALTER TABLE streams ADD COLUMN channel_name TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
+        try:
             db.execute("ALTER TABLE streams ADD COLUMN loop_video_id INTEGER")
         except sqlite3.OperationalError:
             pass
@@ -211,13 +216,13 @@ def init_db():
         )
 
 # --- Streams ----------------------------------------------------------------
-def create_stream(name, rtmp_key="", youtube_url="", stream_type="video",
+def create_stream(name, channel_name="", rtmp_key="", youtube_url="", stream_type="video",
                   quality_mode="balanced", owner_id=None):
     with get_db() as db:
         cur = db.execute(
-            "INSERT INTO streams (name, rtmp_key, youtube_url, stream_type, quality_mode, owner_id, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (name, rtmp_key, youtube_url, stream_type, quality_mode, owner_id, time.time()),
+            "INSERT INTO streams (name, channel_name, rtmp_key, youtube_url, stream_type, quality_mode, owner_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (name, channel_name, rtmp_key, youtube_url, stream_type, quality_mode, owner_id, time.time()),
         )
         return cur.lastrowid
 

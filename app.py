@@ -662,8 +662,10 @@ def stream_create():
         if quality_mode not in config.QUALITY_MODES:
             quality_mode = "balanced"
         uid, _ = current_user()
+        channel_name = request.form.get("channel_name", "").strip()
         sid = db.create_stream(
             name,
+            channel_name=channel_name,
             rtmp_key=request.form.get("rtmp_key", "").strip(),
             youtube_url=request.form.get("youtube_url", "").strip(),
             stream_type=stream_type,
@@ -721,6 +723,7 @@ def stream_edit(stream_id):
         db.update_stream(
             stream_id,
             name=request.form.get("name", "").strip() or stream["name"],
+            channel_name=request.form.get("channel_name", "").strip() or stream.get("channel_name", ""),
             rtmp_key=request.form.get("rtmp_key", "").strip(),
             youtube_url=request.form.get("youtube_url", "").strip(),
             loop_queue=1 if request.form.get("loop_queue") else 0,
