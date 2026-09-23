@@ -1,9 +1,9 @@
 """StreamCast — single-owner 24/7 YouTube streaming panel."""
 import logging
+import psutil
 from logging.handlers import RotatingFileHandler
 import re
 import secrets
-import shutil
 import subprocess
 import time
 import uuid
@@ -20,6 +20,7 @@ from werkzeug.utils import secure_filename
 
 import config
 import db
+import storage
 from encoder import ffprobe_info, terminate_job, worker as encoder_worker
 from streamer import manager
 
@@ -81,19 +82,19 @@ def _youtube_id(url):
     return m.group(1) if m else None
 
 
-def _thumb_path(encoded_name):
+def _thumb_path(video):
     """Thumbnail sits next to the encoded file: xxx.mp4 -> xxx.mp4.jpg."""
-    return config.ENCODED_DIR / (encoded_name + ".jpg")
+    return storage.video_thumb_path(video)
 
 
 def _ensure_thumb(video):
     """Grab a frame from an encoded video if its thumbnail doesn't exist yet."""
     if not video["encoded_name"] or video["kind"] == "audio":
         return
-    thumb = _thumb_path(video["encoded_name"])
+    thumb = _thumb_path(video)
     if thumb.exists():
         return
-    src = config.ENCODED_DIR / video["encoded_name"]
+    src = storage.video_encoded_path(video)
     if not src.exists():
         return
     try:
@@ -143,11 +144,11 @@ def _hydrate_media_meta(v):
         updates["width"] = None
         updates["height"] = None
     if not v["size"]:
-        p = config.ENCODED_DIR / v["encoded_name"]
+        p = storage.video_encoded_path(v)
         if p.exists():
             updates["size"] = p.stat().st_size
     if not v["width"] and v.get("kind") != "audio":
-        src = config.UPLOAD_DIR / v["stored_name"]
+        src = storage.video_upload_path(v)
         if src.exists():
             try:
                 _, _, w, h = ffprobe_info(src)
@@ -161,6 +162,14 @@ def _hydrate_media_meta(v):
 
 
 app = Flask(__name__)
+@app.route('/api/system_load')
+def api_system_load():
+    """Current system-wide CPU and RAM usage."""
+    try:
+        import psutil
+        return jsonify({'cpu': psutil.cpu_percent(interval=0.1), 'ram': psutil.virtual_memory().percent})
+    except Exception as e:
+        return jsonify({'cpu': 0, 'ram': 0, 'error': str(e)}), 500
 app.config["SECRET_KEY"] = config.SECRET_KEY
 app.config["MAX_CONTENT_LENGTH"] = config.MAX_UPLOAD_MB * 1024 * 1024
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
@@ -493,8 +502,21 @@ def admin_panel():
     created = session.pop("created_password", None)
     streams = db.list_streams()
     shared = {u["id"]: set(db.list_shared_stream_ids(u["id"])) for u in users}
+    storages_ui = []
+    for row in db.list_storages():
+        st = storage.disk_status(row)
+        storages_ui.append({
+            "id": row["id"], "name": row["name"],
+            "path": str(storage.root(row)),
+            "is_main": row["path"] is None,
+            "is_default": bool(row["is_default"]),
+            "files": db.count_videos_on_storage(row["id"]),
+            **st,
+        })
     return render_template("admin.html", users=users, created=created,
-                           roles=ROLES, streams=streams, shared=shared)
+                           roles=ROLES, streams=streams, shared=shared,
+                           storages=storages_ui,
+                           min_free_gb=config.MIN_FREE_GB)
 
 
 @app.route("/admin/users", methods=["POST"])
@@ -551,6 +573,59 @@ def admin_delete_user(user_id):
     return redirect(url_for("admin_panel"))
 
 
+# --- Storages (admin: extra upload targets, e.g. an external SSD) ------------
+@app.route("/admin/storages/scan", methods=["GET"])
+@admin_required
+def admin_scan_storages():
+    """Scan system for available disks/mounts to help the admin pick a path."""
+    disks = storage.scan_available_disks()
+    return jsonify(disks)
+
+
+@app.route("/admin/storages", methods=["POST"])
+@admin_required
+def admin_add_storage():
+    try:
+        path = storage.validate_new_storage(
+            request.form.get("name", ""), request.form.get("path", ""))
+    except storage.StorageError as e:
+        flash(str(e), "error")
+        return redirect(url_for("admin_panel"))
+    db.create_storage(request.form.get("name", "").strip(), path)
+    flash(f"Storage added: {path}", "ok")
+    return redirect(url_for("admin_panel"))
+
+
+@app.route("/admin/storages/<int:storage_id>/default", methods=["POST"])
+@admin_required
+def admin_default_storage(storage_id):
+    if not db.get_storage(storage_id):
+        abort(404)
+    db.set_default_storage(storage_id)
+    flash("Default storage updated — new uploads go there while it has room", "ok")
+    return redirect(url_for("admin_panel"))
+
+
+@app.route("/admin/storages/<int:storage_id>/delete", methods=["POST"])
+@admin_required
+def admin_delete_storage(storage_id):
+    row = db.get_storage(storage_id)
+    if not row:
+        abort(404)
+    if row["path"] is None:
+        flash("The main storage cannot be removed", "error")
+        return redirect(url_for("admin_panel"))
+    used = db.count_videos_on_storage(storage_id)
+    if used:
+        flash(f"Storage «{row['name']}» still holds {used} file(s) — "
+              f"delete them from the queue first", "error")
+        return redirect(url_for("admin_panel"))
+    db.delete_storage(storage_id)
+    # The files stay on disk; re-adding the same path brings everything back.
+    flash(f"Storage «{row['name']}» removed (files on disk were not touched)", "ok")
+    return redirect(url_for("admin_panel"))
+
+
 # --- Dashboard --------------------------------------------------------------
 @app.route("/")
 @login_required
@@ -567,14 +642,17 @@ def dashboard():
         s["yt_id"] = _youtube_id(s["youtube_url"])
         s["thumb_url"] = _stream_thumb_url(s)
         s["can_manage"] = _owns_stream(s)
-    # Disk holding the storage dir: exact free/total in GB for the dashboard bar.
-    usage = shutil.disk_usage(config.STORAGE_DIR)
-    disk = {
-        "free_gb": usage.free / 1024 ** 3,
-        "total_gb": usage.total / 1024 ** 3,
-        "used_pct": round(100 * usage.used / usage.total, 1) if usage.total else 0,
-    }
-    return render_template("dashboard.html", streams=streams, disk=disk,
+    # Per-storage free/total for the dashboard strip (main storage first).
+    storages_ui = []
+    for row in db.list_storages():
+        st = storage.disk_status(row)
+        storages_ui.append({
+            "id": row["id"], "name": row["name"],
+            "path": str(storage.root(row)),
+            "is_default": bool(row["is_default"]),
+            **st,
+        })
+    return render_template("dashboard.html", streams=streams, storages=storages_ui,
                            encoding_count=db.count_encoding_videos())
 
 
@@ -593,8 +671,10 @@ def stream_create():
         if quality_mode not in config.QUALITY_MODES:
             quality_mode = "balanced"
         uid, _ = current_user()
+        channel_name = request.form.get("channel_name", "").strip()
         sid = db.create_stream(
             name,
+            channel_name=channel_name,
             rtmp_key=request.form.get("rtmp_key", "").strip(),
             youtube_url=request.form.get("youtube_url", "").strip(),
             stream_type=stream_type,
@@ -652,6 +732,7 @@ def stream_edit(stream_id):
         db.update_stream(
             stream_id,
             name=request.form.get("name", "").strip() or stream["name"],
+            channel_name=request.form.get("channel_name", "").strip() or stream.get("channel_name", ""),
             rtmp_key=request.form.get("rtmp_key", "").strip(),
             youtube_url=request.form.get("youtube_url", "").strip(),
             loop_queue=1 if request.form.get("loop_queue") else 0,
@@ -770,10 +851,30 @@ def _unlink_retry(path, attempts=3, delay=0.4):
 
 def _remove_video_files(video):
     if video["stored_name"]:
-        _unlink_retry(config.UPLOAD_DIR / video["stored_name"])
+        _unlink_retry(storage.video_upload_path(video))
     if video["encoded_name"]:
-        _unlink_retry(config.ENCODED_DIR / video["encoded_name"])
-        _unlink_retry(_thumb_path(video["encoded_name"]))
+        _unlink_retry(storage.video_encoded_path(video))
+        _unlink_retry(_thumb_path(video))
+
+
+def _save_upload(fileobj, stored_name, targets):
+    """Save an upload to the first storage that works. The pre-checked order
+    is default-first; if a disk still runs out mid-write (stale free-space
+    numbers, concurrent uploads), the partial file is dropped and the next
+    storage gets the whole file from the start. Returns the storage row."""
+    last_err = None
+    for row in targets:
+        try:
+            fileobj.stream.seek(0)  # a previous attempt may have consumed part of it
+            fileobj.save(storage.upload_dir(row) / stored_name)
+            return row
+        except OSError as e:
+            last_err = e
+            try:
+                (storage.upload_dir(row) / stored_name).unlink(missing_ok=True)
+            except OSError:
+                pass
+    raise last_err if last_err else OSError("no storage available")
 
 
 @app.route("/upload/<int:stream_id>", methods=["POST"])
@@ -785,6 +886,11 @@ def upload(stream_id):
         abort(404)
     is_music = stream["stream_type"] == "music"
     files = request.files.getlist("video")
+    # Original + encoded copy must both fit: the request body size is the
+    # best hint we get before writing (×2 heuristic), the MIN_FREE_GB
+    # watermark is always reserved on top.
+    needed = (request.content_length or 0) * 2
+    targets = storage.upload_targets(needed=needed)
     added = 0
     for f in files:
         if not f or not f.filename:
@@ -798,8 +904,14 @@ def upload(stream_id):
             flash(f"{f.filename}: unsupported type", "error")
             continue
         stored = f"{uuid.uuid4().hex}{ext}"
-        f.save(config.UPLOAD_DIR / stored)
-        db.add_video(stream_id, f.filename, stored, kind=kind)
+        try:
+            row = _save_upload(f, stored, targets)
+        except OSError:
+            logging.getLogger("streamcast").exception("Upload failed — no storage could take %s", stored)
+            flash(f"{f.filename}: no storage has enough free space", "error")
+            continue
+        db.add_video(stream_id, f.filename, stored, kind=kind,
+                     storage_id=row["id"])
         added += 1
     if added:
         flash(f"{added} file(s) queued for encoding", "ok")
@@ -881,7 +993,7 @@ def video_file(video_id):
     if not video or not video["encoded_name"]:
         abort(404)
     _owned_stream(video["stream_id"])
-    path = config.ENCODED_DIR / video["encoded_name"]
+    path = storage.video_encoded_path(video)
     if not path.exists():
         abort(404)
     mime = "audio/mpeg" if video["kind"] == "audio" else "video/mp4"
@@ -913,7 +1025,7 @@ def video_thumb(video_id):
     video = db.get_video(video_id)
     if not video or not video["encoded_name"] or video["kind"] == "audio":
         abort(404)
-    thumb = _thumb_path(video["encoded_name"])
+    thumb = _thumb_path(video)
     if not thumb.exists():
         _ensure_thumb(video)
         if not thumb.exists():
@@ -1041,7 +1153,10 @@ def _sweep_orphan_files():
                 referenced.add(name)
                 referenced.add(name + ".jpg")
     removed = 0
-    for d in (config.UPLOAD_DIR, config.ENCODED_DIR):
+    dirs = []
+    for row in db.list_storages():
+        dirs += (storage.upload_dir(row), storage.encoded_dir(row))
+    for d in dirs:
         if not d.exists():
             continue
         for f in d.iterdir():
@@ -1055,10 +1170,21 @@ def _sweep_orphan_files():
         logging.getLogger("streamcast").info("Swept %d orphaned storage file(s)", removed)
 
 
+@login_required
+@app.route('/admin/storage/default/<int:storage_id>', methods=['POST'])
+@login_required
+def admin_set_default_storage(storage_id):
+    if current_role() != 'admin':
+        abort(403)
+    db.set_default_storage(storage_id)
+    flash('Default storage updated', 'ok')
+    return redirect(url_for('admin'))
+
 def bootstrap():
     config.ensure_dirs()
     _setup_logging()
     db.init_db()
+    storage.ensure_all()
     if config.SECRET_KEY == "dev-secret-change-me":
         # Safe default for self-hosters who never set STREAMCAST_SECRET: mint a
         # random key once and keep it in the DB so sessions survive restarts.

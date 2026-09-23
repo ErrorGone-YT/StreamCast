@@ -118,6 +118,11 @@ ALLOWED_AUDIO_EXT = {".mp3", ".wav", ".flac", ".ogg", ".oga", ".m4a", ".aac", ".
 # queue changes but more frequent reconnects.
 RELOAD_BLOCK_SECONDS = int(_env("STREAMCAST_RELOAD_BLOCK_SECONDS", "900"))
 
+# Extra storages (admin panel) and the main one stop accepting new files when
+# their disk has less than this much free space — the DB/WAL and ffmpeg share
+# those disks too, and a 100%-full disk breaks everything on it.
+MIN_FREE_GB = int(_env("STREAMCAST_MIN_FREE_GB", "5"))
+
 # How long YouTube keeps a broadcast alive without incoming data before it
 # finalizes it and saves it as a video (~1 minute in practice, undocumented).
 # If ffmpeg keeps crashing and the supervisor can't get it back up within this

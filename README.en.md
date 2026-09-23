@@ -9,6 +9,13 @@ target) — a "live" channel that runs forever without you touching it.
 It's built for a **single owner**: you log in with one password, and every
 stream is yours. No sign-up, no billing, no multi-tenant complexity.
 
+
+## Dashboard Features
+
+- **System Monitoring**: Real-time CPU and RAM usage tracking.
+- **Advanced Storage Management**: Ability to set any connected storage as the default one.
+
+
 ## How it works
 
 1. **Upload** videos to a stream. Every file is queued for encoding.
