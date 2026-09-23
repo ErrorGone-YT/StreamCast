@@ -142,7 +142,7 @@
        data-status="{{ 'live' if s.live else 'offline' }}"
        data-type="{{ s.stream_type }}"
        data-name="{{ s.name|lower }}"
-       data-all="{{ (s.name ~ ' ' ~ s.stream_type ~ ' ' ~ ('live' if s.live else 'offline') ~ ' ' ~ (s.resolution or '') ~ ' ' ~ s.video_count ~ ' ' ~ ('tracks' if s.stream_type == 'music' else 'videos') ~ ' ' ~ (s.runtime_label or '') ~ ' ' ~ (s.size_label or '') ~ ' ' ~ ('scheduled' if s.scheduled_at else '')) | lower }}">
+       data-all="{{ (s.channel_name ~ ' ' ~ s.name ~ ' ' ~ s.stream_type ~ ' ' ~ ('live' if s.live else 'offline') ~ ' ' ~ (s.resolution or '') ~ ' ' ~ s.video_count ~ ' ' ~ ('tracks' if s.stream_type == 'music' else 'videos') ~ ' ' ~ (s.runtime_label or '') ~ ' ' ~ (s.size_label or '') ~ ' ' ~ ('scheduled' if s.scheduled_at else '')) | lower }}">
     <div class="row">
       <span class="pill {{ 'pill-live' if s.live else 'pill-off' }}">
         <span class="pdot"></span>{{ 'LIVE' if s.live else 'OFFLINE' }}
