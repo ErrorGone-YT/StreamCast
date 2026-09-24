@@ -105,6 +105,9 @@ QUALITY_MODES = {
 # Uploads at or above this fps are rejected (matches the "blocks 60fps!" rule).
 MAX_FPS = int(_env("STREAMCAST_MAX_FPS", "60"))
 
+# Restart streams that were live when the server stopped (1/0).
+AUTO_RESUME = _env("STREAMCAST_AUTORESUME", "1") == "1"
+
 MAX_UPLOAD_MB = int(_env("STREAMCAST_MAX_UPLOAD_MB", "8192"))  # 8 GB
 ALLOWED_EXT = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv", ".m4v"}
 

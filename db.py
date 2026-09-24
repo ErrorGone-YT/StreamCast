@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS streams (
     loop_queue    INTEGER DEFAULT 1,      -- 1 = repeat the queue forever (24/7)
     is_live       INTEGER DEFAULT 0,
     pid           INTEGER,                -- ffmpeg process id when live
+    live_since    REAL,                   -- unix ts when the live session started (survives restarts)
     scheduled_at  REAL,                   -- unix ts for a planned start, or NULL
     created_at    REAL NOT NULL,
     shuffle       INTEGER DEFAULT 0,      -- 1 = random play enabled
@@ -198,6 +199,10 @@ def migrate_db():
             db.execute("ALTER TABLE videos ADD COLUMN prev_encoded_storage_id INTEGER")
         except sqlite3.OperationalError:
             pass
+        try:
+            db.execute("ALTER TABLE streams ADD COLUMN live_since REAL")
+        except sqlite3.OperationalError:
+            pass
 
 def init_db():
     config.ensure_dirs()
@@ -283,8 +288,15 @@ def delete_stream(stream_id):
         db.execute("DELETE FROM streams WHERE id = ?", (stream_id,))
         db.execute("DELETE FROM stream_access WHERE stream_id = ?", (stream_id,))
 
-def set_live(stream_id, is_live, pid=None):
-    update_stream(stream_id, is_live=1 if is_live else 0, pid=pid)
+def set_live(stream_id, is_live, pid=None, live_since=None):
+    """Persist live state. live_since marks when the session started: callers
+    may pass the original timestamp to keep uptime continuous (auto-resume);
+    a fresh start leaves it None and 'now' is recorded."""
+    if is_live:
+        update_stream(stream_id, is_live=1, pid=pid,
+                      live_since=live_since if live_since is not None else time.time())
+    else:
+        update_stream(stream_id, is_live=0, pid=pid, live_since=None)
 
 # --- Videos -----------------------------------------------------------------
 def add_video(stream_id, orig_name, stored_name, kind="video", storage_id=1,

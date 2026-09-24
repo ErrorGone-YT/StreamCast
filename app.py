@@ -1258,6 +1258,13 @@ def bootstrap():
     _sweep_orphan_files()
     encoder_worker.start()
     manager.start_scheduler()
+    if config.AUTO_RESUME:
+        log = logging.getLogger("streamcast")
+        resumed, failed = manager.resume_interrupted()
+        for sid in resumed:
+            log.info("Resumed stream %d (was live before restart)", sid)
+        for sid, msg in failed:
+            log.warning("Could not resume stream %d: %s", sid, msg)
     logging.getLogger("streamcast").info("StreamCast started")
 
 

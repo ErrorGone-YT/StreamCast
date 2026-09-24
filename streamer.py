@@ -43,7 +43,7 @@ def _has_audio_stream(path):
 class _Runner:
     """Owns one ffmpeg process + watchdog for a single stream."""
 
-    def __init__(self, stream_id):
+    def __init__(self, stream_id, live_since=None):
         self.stream_id = stream_id
         self.proc = None
         self.playlist_path = None
@@ -63,8 +63,10 @@ class _Runner:
 
         # Live-session uptime (wall clock). Set once per runner start; block
         # rebuilds and watchdog restarts don't reset it. Reset on next start.
+        # _live_since keeps a resumed session's original start (auto-resume).
         self.session_started = None
         self.session_stopped = None
+        self._live_since = live_since
 
         # now-playing tracking (computed from wall-clock, since -re plays realtime)
         self._block_started = 0.0          # monotonic time the current block began
@@ -285,7 +287,7 @@ class _Runner:
         self.playlist_path, self._block_videos, self._block_total = pl, play_order, block_total
         self._stop.clear()
         self._reload.clear()
-        self.session_started = time.time()
+        self.session_started = self._live_since or time.time()
         self.session_stopped = None
         self._thread = threading.Thread(target=self._supervise, daemon=True)
         self._thread.start()
@@ -317,7 +319,8 @@ class _Runner:
         )
         threading.Thread(target=self._drain_stderr, daemon=True).start()
         self._block_started = time.monotonic()
-        db.set_live(self.stream_id, True, pid=self.proc.pid)
+        db.set_live(self.stream_id, True, pid=self.proc.pid,
+                    live_since=self.session_started)
 
     def _supervise(self):
         """Play the queue block by block, rebuilding between blocks."""
@@ -460,12 +463,12 @@ class StreamManager:
         self._sched_thread = None
         self._sched_stop = threading.Event()
 
-    def start_stream(self, stream_id):
+    def start_stream(self, stream_id, live_since=None):
         with self._lock:
             existing = self._runners.get(stream_id)
             if existing and existing.is_running():
                 return True, "Already live"
-            runner = _Runner(stream_id)
+            runner = _Runner(stream_id, live_since=live_since)
             ok = runner.start()
             if ok:
                 self._runners[stream_id] = runner
@@ -520,6 +523,29 @@ class StreamManager:
         }
 
     # -- scheduler -----------------------------------------------------------
+    def resume_interrupted(self):
+        """Restart streams that were live when the server went down.
+
+        The runner registry is memory-only, but streams.is_live is persisted:
+        a flag still set at boot means the user wanted that stream live. Only
+        call once, from bootstrap. Returns (resumed_ids, failed[(id, msg)]).
+        """
+        resumed, failed = [], []
+        for s in db.list_streams():
+            if not s.get("is_live"):
+                continue
+            # Keep the original session start so the uptime timer continues
+            # instead of restarting from zero (None = pre-feature flag).
+            ok, msg = self.start_stream(s["id"], live_since=s.get("live_since") or time.time())
+            if ok:
+                resumed.append(s["id"])
+            else:
+                # Clear the flag so a permanently broken stream doesn't linger
+                # as phantom-live; a transient failure just needs one click.
+                db.set_live(s["id"], False, pid=None)
+                failed.append((s["id"], msg))
+        return resumed, failed
+
     def start_scheduler(self):
         if self._sched_thread and self._sched_thread.is_alive():
             return
