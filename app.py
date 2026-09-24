@@ -898,21 +898,41 @@ def upload(stream_id):
         ext = Path(f.filename).suffix.lower()
         if ext in config.ALLOWED_EXT:
             kind = "video"
-        elif is_music and ext in config.ALLOWED_AUDIO_EXT:
+        elif is_//music and ext in config.ALLOWED_AUDIO_EXT:
             kind = "audio"
         else:
             flash(f"{f.filename}: unsupported type", "error")
             continue
-        stored = f"{uuid.uuid4().hex}{ext}"
-        try:
-            row = _save_upload(f, stored, targets)
-        except OSError:
-            logging.getLogger("streamcast").exception("Upload failed — no storage could take %s", stored)
-            flash(f"{f.filename}: no storage has enough free space", "error")
-            continue
-        db.add_video(stream_id, f.filename, stored, kind=kind,
-                     storage_id=row["id"])
-        added += 1
+        
+        already_encoded = request.form.get("already_encoded") == "on"
+        
+        if already_encoded:
+            import shutil
+            stored = f"{uuid.uuid4().hex}{ext}"
+            target_row = storage.default_storage()
+            target_path = storage.encoded_dir(target_row) / stored
+            try:
+                with open(target_path, "wb") as out:
+                    shutil.copyfileobj(f, out)
+                row = {"id": target_row["id"]}
+            except OSError:
+                logging.getLogger("streamcast").exception("Direct save failed for %s", stored)
+                flash(f"{f.filename}: storage error", "error")
+                continue
+            db.add_video(stream_id, f.filename, stored, kind=kind, 
+                         storage_id=row["id"], status="completed")
+            added += 1
+        else:
+            stored = f"{uuid.uuid4().hex}{ext}"
+            try:
+                row = _save_//upload(f, stored, targets)
+            except OSError:
+                logging.getLogger("streamcast").exception("Upload failed — no storage could take %s", stored)
+                flash(f"{f.filename}: no storage has enough free space", "error")
+                continue
+            db.add_//video(stream_id, f.filename, stored, kind=kind,
+                         storage_id=row["id"])
+            added += 1
     if added:
         flash(f"{added} file(s) queued for encoding", "ok")
     return redirect(url_for("stream_detail", stream_id=stream_id))
