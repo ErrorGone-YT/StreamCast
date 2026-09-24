@@ -15,6 +15,7 @@ no manual stop/start. `apply_now()` forces an immediate block restart.
 A watchdog restarts ffmpeg if it dies (network blip, YouTube reset), so the
 channel self-heals.
 """
+import logging
 import random
 import subprocess
 import threading
@@ -534,17 +535,41 @@ class StreamManager:
         for s in db.list_streams():
             if not s.get("is_live"):
                 continue
-            # Keep the original session start so the uptime timer continues
-            # instead of restarting from zero (None = pre-feature flag).
-            ok, msg = self.start_stream(s["id"], live_since=s.get("live_since") or time.time())
+            live_since = s.get("live_since")
+            last_seen = s.get("last_seen")
+            if live_since and last_seen and live_since < last_seen <= time.time():
+                # The stream kept a heartbeat, so we know how long it actually
+                # streamed before the crash: shift the session start forward by
+                # the downtime instead of counting it as uptime.
+                live_since = time.time() - (last_seen - live_since)
+            # None (pre-feature flag) → start the uptime from now.
+            ok, msg = self.start_stream(s["id"], live_since=live_since or time.time())
             if ok:
                 resumed.append(s["id"])
             else:
                 # Clear the flag so a permanently broken stream doesn't linger
                 # as phantom-live; a transient failure just needs one click.
                 db.set_live(s["id"], False, pid=None)
-                failed.append((s["id"], msg))
+                failed.append((s["id"], msg, live_since))
+        if failed:
+            self._schedule_resume_retry(failed)
         return resumed, failed
+
+    def _schedule_resume_retry(self, failed, delay=45.0):
+        """One background retry for streams that failed to resume — the usual
+        cause is the network not being up yet at boot. The is_live flag stays
+        cleared meanwhile, so the UI shows the stream as offline until it
+        actually starts."""
+        def _retry():
+            time.sleep(delay)
+            log = logging.getLogger("streamcast")
+            for sid, _first_msg, live_since in failed:
+                ok, msg = self.start_stream(sid, live_since=live_since or time.time())
+                if ok:
+                    log.info("Resumed stream %d on retry", sid)
+                else:
+                    log.warning("Stream %d still failed to resume: %s", sid, msg)
+        threading.Thread(target=_retry, daemon=True).start()
 
     def start_scheduler(self):
         if self._sched_thread and self._sched_thread.is_alive():
@@ -557,6 +582,10 @@ class StreamManager:
         while not self._sched_stop.is_set():
             now = time.time()
             for s in db.list_streams():
+                if self.is_live(s["id"]):
+                    # Live heartbeat: lets a post-crash resume tell streamed
+                    # time from server downtime (see resume_interrupted).
+                    db.update_stream(s["id"], last_seen=now)
                 sched = s.get("scheduled_at")
                 if sched and sched <= now and not self.is_live(s["id"]):
                     db.update_stream(s["id"], scheduled_at=None)

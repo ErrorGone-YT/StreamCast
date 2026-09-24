@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS streams (
     is_live       INTEGER DEFAULT 0,
     pid           INTEGER,                -- ffmpeg process id when live
     live_since    REAL,                   -- unix ts when the live session started (survives restarts)
+    last_seen     REAL,                   -- unix ts of the last live heartbeat (lets resume skip downtime)
     scheduled_at  REAL,                   -- unix ts for a planned start, or NULL
     created_at    REAL NOT NULL,
     shuffle       INTEGER DEFAULT 0,      -- 1 = random play enabled
@@ -201,6 +202,10 @@ def migrate_db():
             pass
         try:
             db.execute("ALTER TABLE streams ADD COLUMN live_since REAL")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            db.execute("ALTER TABLE streams ADD COLUMN last_seen REAL")
         except sqlite3.OperationalError:
             pass
 

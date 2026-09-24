@@ -231,6 +231,8 @@ sudo certbot --nginx -d your-domain.com
 | `STREAMCAST_FPS` | 30 | Частота кадров на выходе |
 | `STREAMCAST_VBITRATE` | 4500k | Битрейт видео |
 | `STREAMCAST_MAX_UPLOAD_MB` | 8192 | Максимальный размер загрузки |
+| `STREAMCAST_AUTORESUME` | `1` | Автоперезапуск трансляций после рестарта сервера (0 — выкл) |
+| `STREAMCAST_MAX_FPS` | 60 | Видео с fps ≥ этого значения отклоняется при загрузке |
 
 ---
 

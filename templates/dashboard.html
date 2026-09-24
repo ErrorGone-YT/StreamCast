@@ -130,7 +130,7 @@
   <label class="thumb-toggle" title="Show or hide stream thumbnails">
     🖼 Thumbnails
     <span class="switch">
-      <input type="checkbox" id="thumbToggle" checked>
+      <input type="checkbox" id="thumbToggle" {% if request.cookies.get('sc-thumbs') != '0' %}checked{% endif %}>
       <span class="slider round"></span>
     </span>
   </label>
@@ -382,9 +382,13 @@ const thumbToggle = document.getElementById('thumbToggle');
 function applyThumbs(show) {
   document.body.classList.toggle('no-thumbs', !show);
   try { localStorage.setItem('sc-thumbs', show ? '1' : '0'); } catch (e) {}
+  // The cookie lets the server render the toggle's saved state on page load
+  // (no brief "on" flash when thumbnails were switched off).
+  document.cookie = 'sc-thumbs=' + (show ? '1' : '0') + '; path=/; max-age=31536000; SameSite=Lax';
 }
 if (thumbToggle) {
     try { thumbToggle.checked = localStorage.getItem('sc-thumbs') !== '0'; } catch (e) {}
+    applyThumbs(thumbToggle.checked);  // sync the class with the saved state on load
     thumbToggle.addEventListener('change', () => applyThumbs(thumbToggle.checked));
 }
 
