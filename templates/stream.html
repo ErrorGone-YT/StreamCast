@@ -355,6 +355,10 @@ if (uploadForm) {
 
       const formData = new FormData();
       formData.append('video', file);
+      // The per-file XHR builds its own FormData, so form fields are not
+      // included automatically — forward the skip-encode checkbox explicitly.
+      const encCheckbox = document.getElementById('already_encoded');
+      if (encCheckbox && encCheckbox.checked) formData.append('already_encoded', 'on');
 
       return new Promise((resolve) => {
         const xhr = new XMLHttpRequest();

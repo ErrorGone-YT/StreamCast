@@ -6,6 +6,7 @@ import re
 import secrets
 import subprocess
 import time
+import shutil
 import uuid
 from functools import wraps
 from pathlib import Path
@@ -743,6 +744,10 @@ def stream_edit(stream_id):
             # keep playing their previous-quality copies until each is done.
             for v in db.list_videos(stream_id):
                 if v["status"] == "completed" and (v["encode_preset"] or "balanced") != quality_mode:
+                    # Fast-imported files have no source upload — nothing to
+                    # re-encode; they stay as they are.
+                    if not storage.video_upload_path(v).exists():
+                        continue
                     db.update_video(v["id"], status="waiting_encode", progress=0.0, error_msg="")
             manager.apply_now(stream_id)
             flash("Quality mode changed — the queue is being re-encoded in the background", "ok")
@@ -857,7 +862,7 @@ def _remove_video_files(video):
         _unlink_retry(_thumb_path(video))
 
 
-def _save_upload(fileobj, stored_name, targets):
+def _do_save_file(fileobj, stored_name, targets):
     """Save an upload to the first storage that works. The pre-checked order
     is default-first; if a disk still runs out mid-write (stale free-space
     numbers, concurrent uploads), the partial file is dropped and the next
@@ -881,62 +886,97 @@ def _save_upload(fileobj, stored_name, targets):
 @login_required
 def upload(stream_id):
     _owned_stream(stream_id)
-    stream = db.get_stream(stream_id)
-    if not stream:
+    curr_stream = db.get_stream(stream_id)
+    if not curr_stream:
         abort(404)
-    is_music = stream["stream_type"] == "music"
+    
+    is_music = curr_stream["stream_type"] == "music"
     files = request.files.getlist("video")
-    # Original + encoded copy must both fit: the request body size is the
-    # best hint we get before writing (×2 heuristic), the MIN_FREE_GB
-    # watermark is always reserved on top.
-    needed = (request.content_length or 0) * 2
-    targets = storage.upload_targets(needed=needed)
-    added = 0
+    
+    # Лимит места
+    needed_space = (request.content_length or 0) * 2
+    storage_targets = storage.upload_targets(needed=needed_space)
+    
+    added_count = 0
+    # Проверяем флаг быстрого импорта
+    is_fast = request.form.get("already_encoded") == "on"
+    stream_quality_mode = curr_stream["quality_mode"] or "balanced"
+    
     for f in files:
         if not f or not f.filename:
             continue
+        
         ext = Path(f.filename).suffix.lower()
         if ext in config.ALLOWED_EXT:
             kind = "video"
-        elif is_//music and ext in config.ALLOWED_AUDIO_EXT:
+        elif is_music and ext in config.ALLOWED_AUDIO_EXT:
             kind = "audio"
         else:
             flash(f"{f.filename}: unsupported type", "error")
             continue
+            
+        stored_name = f"{uuid.uuid4().hex}{ext}"
         
-        already_encoded = request.form.get("already_encoded") == "on"
-        
-        if already_encoded:
-            import shutil
-            stored = f"{uuid.uuid4().hex}{ext}"
-            target_row = storage.default_storage()
-            target_path = storage.encoded_dir(target_row) / stored
-            try:
-                with open(target_path, "wb") as out:
-                    shutil.copyfileobj(f, out)
-                row = {"id": target_row["id"]}
-            except OSError:
-                logging.getLogger("streamcast").exception("Direct save failed for %s", stored)
-                flash(f"{f.filename}: storage error", "error")
-                continue
-            db.add_video(stream_id, f.filename, stored, kind=kind, 
-                         storage_id=row["id"], status="completed")
-            added += 1
-        else:
-            stored = f"{uuid.uuid4().hex}{ext}"
-            try:
-                row = _save_//upload(f, stored, targets)
-            except OSError:
-                logging.getLogger("streamcast").exception("Upload failed — no storage could take %s", stored)
-                flash(f"{f.filename}: no storage has enough free space", "error")
-                continue
-            db.add_//video(stream_id, f.filename, stored, kind=kind,
-                         storage_id=row["id"])
-            added += 1
-    if added:
-        flash(f"{added} file(s) queued for encoding", "ok")
-    return redirect(url_for("stream_detail", stream_id=stream_id))
+        try:
+            if is_fast:
+                # БЫСТРЫЙ ПУТЬ: файл уже нормализован локальным энкодером —
+                # пишем сразу в encoded/ без ffmpeg. Тот же fallback по дискам,
+                # что и у обычной загрузки.
+                if not storage_targets:
+                    raise OSError("no storage available")
+                res_row = storage_targets[0]
+                target_path = storage.encoded_dir(res_row) / stored_name
+                with open(target_path, "wb") as out_f:
+                    shutil.copyfileobj(f.stream, out_f)
+                status_val = "completed"
+                encoded_name_val = stored_name
+                if kind == "video" and ext != ".mp4":
+                    flash(f"{f.filename}: not an .mp4 — the stream expects files "
+                          f"pre-encoded by the local encoder", "error")
+            else:
+                # ОБЫЧНЫЙ ПУТЬ: через _do_save_file (бывший _save_upload)
+                res_row = _do_save_file(f, stored_name, storage_targets)
+                status_val = "waiting_encode"
+                encoded_name_val = None
 
+            # Метаданные, которые при обычном энкодинге проставляет encoder.py,
+            # — иначе у тайла нет размера, бейджа и длительности.
+            duration, fps, w, h = 0, 0.0, None, None
+            try:
+                duration, fps, w, h = ffprobe_info(target_path)
+            except Exception:
+                pass
+            if is_fast and kind == "video" and fps and fps >= config.MAX_FPS:
+                target_path.unlink(missing_ok=True)
+                flash(f"{f.filename}: {fps:.0f}fps rejected (max {config.MAX_FPS - 1}fps)", "error")
+                continue
+
+            video_id = db.add_video(stream_id, f.filename, stored_name, kind=kind,
+                         storage_id=res_row["id"], status=status_val,
+                         encoded_name=encoded_name_val, encode_preset=stream_quality_mode)
+            added_count += 1
+
+            updates = {"duration": duration}
+            try:
+                updates["size"] = target_path.stat().st_size
+            except OSError:
+                pass
+            if kind == "video":
+                updates["width"], updates["height"] = w, h
+            db.update_video(video_id, **updates)
+            if is_fast:
+                _ensure_thumb(db.get_video(video_id))
+
+        except Exception as e:
+            logging.getLogger("streamcast").exception(f"Upload error: {e}")
+            flash(f"{f.filename}: upload failed", "error")
+            continue
+            
+    if added_count:
+        msg = f"{added_count} file(s) ready" if is_fast else f"{added_count} file(s) queued for encoding"
+        flash(msg, "ok")
+        
+    return redirect(url_for("stream_detail", stream_id=stream_id))
 
 @app.route("/video/set_loop/<int:video_id>", methods=["POST"])
 @login_required

@@ -287,16 +287,17 @@ def set_live(stream_id, is_live, pid=None):
     update_stream(stream_id, is_live=1 if is_live else 0, pid=pid)
 
 # --- Videos -----------------------------------------------------------------
-def add_video(stream_id, orig_name, stored_name, kind="video", storage_id=1):
+def add_video(stream_id, orig_name, stored_name, kind="video", storage_id=1,
+              status="waiting_encode", encoded_name=None, encode_preset="balanced"):
     with get_db() as db:
         pos = db.execute(
             "SELECT COALESCE(MAX(position), -1) + 1 p FROM videos WHERE stream_id = ?",
             (stream_id,),
         ).fetchone()["p"]
         cur = db.execute(
-            "INSERT INTO videos (stream_id, orig_name, stored_name, kind, storage_id, position, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (stream_id, orig_name, stored_name, kind, storage_id, pos, time.time()),
+            "INSERT INTO videos (stream_id, orig_name, stored_name, kind, storage_id, position, created_at, status, encoded_name, encode_preset) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (stream_id, orig_name, stored_name, kind, storage_id, pos, time.time(), status, encoded_name, encode_preset),
         )
         return cur.lastrowid
 
