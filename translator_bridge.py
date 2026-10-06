@@ -279,28 +279,33 @@ def check_provider_keys(provider_id):
             if provider.get("kind") == "gemini":
                 response = requests.get(
                     "https://generativelanguage.googleapis.com/v1beta/models",
-                    params={"key": key}, timeout=10)
+                    params={"key": key}, timeout=15)
                 if response.status_code == 200:
                     return "ok", ""
                 if response.status_code == 429:
                     return "frozen", "HTTP 429"
                 return "dead", f"HTTP {response.status_code}"
             response = requests.get(f"{base}/models",
-                                    headers={"Authorization": f"Bearer {key}"}, timeout=10)
+                                    headers={"Authorization": f"Bearer {key}"}, timeout=15)
             if response.status_code != 200:
                 if response.status_code == 429:
                     return "frozen", "HTTP 429"
                 return "dead", f"HTTP {response.status_code}"
             # The key exists — now check it can actually run a completion
-            # (catches accounts with no balance: HTTP 402).
-            completion = requests.post(
-                f"{base}/chat/completions",
-                headers={"Authorization": f"Bearer {key}",
-                         "Content-Type": "application/json"},
-                json={"model": provider.get("model") or "gpt-4o-mini",
-                      "max_tokens": 64,
-                      "messages": [{"role": "user", "content": "hi"}]},
-                timeout=20)
+            # (catches accounts with no balance: HTTP 402). A completion can be
+            # slow on budget gateways, so a timeout here means "unknown", not
+            # "dead": the key was accepted by /models.
+            try:
+                completion = requests.post(
+                    f"{base}/chat/completions",
+                    headers={"Authorization": f"Bearer {key}",
+                             "Content-Type": "application/json"},
+                    json={"model": provider.get("model") or "gpt-4o-mini",
+                          "max_tokens": 64,
+                          "messages": [{"role": "user", "content": "hi"}]},
+                    timeout=45)
+            except requests.Timeout:
+                return "ok", "key accepted; completion probe timed out (provider slow) — balance not verified"
             if completion.status_code == 200:
                 return "ok", ""
             if completion.status_code == 402:
@@ -308,6 +313,8 @@ def check_provider_keys(provider_id):
             if completion.status_code == 429:
                 return "frozen", "HTTP 429"
             return "dead", f"HTTP {completion.status_code}"
+        except requests.Timeout:
+            return "dead", "timeout on /models — provider unreachable"
         except Exception as error:
             return "dead", str(error)[:80]
 
