@@ -221,11 +221,16 @@
   }
   function applyMode(initial) {
     const fromVideo = seg('translate_source') === 'video';
+    // From video: fields show YouTube values and are locked against editing.
+    // Manual: same fields, freely editable.
     titleInput.readOnly = fromVideo;
     descInput.readOnly = fromVideo;
     titleInput.classList.toggle('readonly', fromVideo);
     descInput.classList.toggle('readonly', fromVideo);
-    if (fromVideo) fetchMeta(!initial);  // always pull fresh values; toast only on explicit clicks
+    // Pull fresh values from YouTube when entering the mode: on the initial
+    // page load only if nothing is saved yet (saves API quota), always on an
+    // explicit mode switch, and via the Fetch button anytime.
+    if (fromVideo && (initial ? !titleInput.value : true)) fetchMeta(!initial);
   }
   document.querySelectorAll('input[name="translate_source"]').forEach(
     r => r.addEventListener('change', () => applyMode(false)));
