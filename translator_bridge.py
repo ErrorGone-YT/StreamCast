@@ -112,7 +112,7 @@ def language_catalog():
     if eng is None:
         return {}
     try:
-        return eng.language_catalog()
+        return eng.available_language_catalog()
     except Exception:
         return {}
 

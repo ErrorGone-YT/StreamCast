@@ -21,22 +21,18 @@
     box-shadow: 0 0 0 1px var(--accent, #6d87ff) inset;
   }
   .tr-seg input { position:absolute; opacity:0; pointer-events:none; }
-  .tr-preview {
-    border:1px solid var(--border); border-radius:10px; padding:12px 14px;
-    background:var(--surface); display:flex; flex-direction:column; gap:8px;
+  /* unified source fields: same look for input and textarea */
+  .tr-field {
+    font:inherit; font-size:13.5px; color:var(--text);
+    background:var(--surface); border:1px solid var(--border-strong);
+    border-radius:10px; padding:9px 12px; width:100%; box-sizing:border-box;
+    outline:none; transition:border-color .2s;
   }
-  .tr-preview-top { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); }
-  .tr-preview .badge {
-    display:inline-flex; align-items:center; gap:4px;
-    background:rgba(240,48,74,.12); color:#ff6b81;
-    font-size:11px; font-weight:700; border-radius:6px; padding:2px 8px;
-  }
-  .tr-preview-title { font-weight:700; font-size:14px; overflow-wrap:anywhere; }
-  .tr-preview-desc { font-size:12.5px; color:var(--text-2); white-space:pre-wrap; overflow-wrap:anywhere;
-                     max-height:80px; overflow:hidden; transition:max-height .2s; }
-  .tr-preview-desc.open { max-height:400px; overflow-y:auto; }
-  .tr-desc-toggle { background:none; border:none; color:var(--accent); font:inherit; font-size:12px;
-                    cursor:pointer; padding:0; text-align:left; }
+  .tr-field:focus { border-color: var(--accent, #6d87ff); }
+  textarea.tr-field { resize:vertical; min-height:90px; line-height:1.45; white-space:pre-wrap; }
+  .tr-field.readonly { opacity:.72; cursor:not-allowed; background:var(--surface-2); }
+  .tr-fields-top { display:flex; align-items:center; gap:8px; }
+  .tr-fields-top .hint { margin:0; flex:1; }
   .tr-chips { display:flex; gap:8px; flex-wrap:wrap; }
   .tr-chip {
     display:inline-flex; align-items:center; gap:6px;
@@ -70,8 +66,6 @@
   .tr-log .k-ok { color:#34c759; }
   .tr-log .k-fail { color:#ff6b81; }
   .tr-log .k-retry { color:#f0a020; }
-  .tr-manual { display:none; flex-direction:column; gap:8px; }
-  .tr-manual.open { display:flex; }
 </style>
 
 <div class="field" id="translateSection">
@@ -101,20 +95,17 @@
           <label><input type="radio" name="translate_source" value="video" {{ 'checked' if (stream.translate_source or 'video') == 'video' }}>From video</label>
           <label><input type="radio" name="translate_source" value="manual" {{ 'checked' if stream.translate_source == 'manual' }}>Enter manually</label>
         </div>
-        <div id="trPreview" class="tr-preview" style="display:none;">
-          <div class="tr-preview-top">
-            <span class="badge">▶ {{ tr_channel.title if tr_channel else 'YouTube' }}</span>
-            <span>WHAT WILL BE TRANSLATED</span>
-            <span class="spacer" style="flex:1"></span>
-            <button type="button" id="trRefresh" title="Reload from YouTube" style="background:none;border:none;cursor:pointer;">⟳</button>
-          </div>
-          <div class="tr-preview-title" id="trPrevTitle">—</div>
-          <div class="tr-preview-desc" id="trPrevDesc"></div>
-          <button type="button" class="tr-desc-toggle" id="trDescToggle">Show description</button>
+        <div class="tr-fields-top">
+          <span class="hint">What will be translated</span>
+          <button type="button" class="btn" id="trRefresh" title="Pull the current title & description from YouTube">⟳ Fetch from YouTube</button>
         </div>
-        <div class="tr-manual" id="trManual">
-          <input type="text" name="translate_title" value="{{ stream.translate_title or '' }}" placeholder="Source title">
-          <textarea name="translate_description" rows="5" placeholder="Source description">{{ stream.translate_description or '' }}</textarea>
+        <div id="trTitleRow">
+          <input type="text" class="tr-field" id="trTitle" name="translate_title"
+                 value="{{ stream.translate_title or '' }}" placeholder="Source title">
+        </div>
+        <div id="trDescRow">
+          <textarea class="tr-field" id="trDesc" name="translate_description"
+                    rows="5" placeholder="Source description">{{ stream.translate_description or '' }}</textarea>
         </div>
       </div>
 
@@ -130,7 +121,7 @@
       <div class="tr-row">
         <span class="tr-label">Languages</span>
         {% if tr_presets %}
-        <select id="trPreset" style="max-width:260px;">
+        <select id="trPreset" class="tr-field" style="max-width:260px;">
           <option value="">Load a preset…</option>
           {% for name in tr_presets %}
           <option value="{{ name }}">{{ name }} ({{ tr_presets[name]|length }})</option>
@@ -168,51 +159,81 @@
 
 <script>
 (function () {
-  const card = document.getElementById('translateSection').querySelector('.tr-card');
+  const card = document.querySelector('#translateSection .tr-card');
   if (!card) return;
   const enable = document.getElementById('translate_enabled');
   enable.addEventListener('change', () => card.classList.toggle('tr-collapsed', !enable.checked));
 
   const seg = (name) => document.querySelector(`input[name="${name}"]:checked`);
-  const preview = document.getElementById('trPreview');
-  const manual = document.getElementById('trManual');
-  const prevTitle = document.getElementById('trPrevTitle');
-  const prevDesc = document.getElementById('trPrevDesc');
-  const descToggle = document.getElementById('trDescToggle');
+  const titleInput = document.getElementById('trTitle');
+  const descInput = document.getElementById('trDesc');
+  const titleRow = document.getElementById('trTitleRow');
+  const descRow = document.getElementById('trDescRow');
   const statusEl = document.getElementById('trStatus');
   const bar = document.querySelector('#trProgress > div');
   const progressBox = document.getElementById('trProgress');
   const logBox = document.getElementById('trLog');
-  const streamId = {{ stream.id }};
   let polling = null;
 
-  async function loadPreview() {
-    if (seg('translate_source') === 'video') {
-      preview.style.display = 'flex'; manual.classList.remove('open');
-      prevTitle.textContent = 'Loading…'; prevDesc.textContent = '';
-      try {
-        const r = await fetch({{ url_for('translate_preview', stream_id=stream.id)|tojson }}, {headers: {'X-Requested-With': 'XMLHttpRequest'}});
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.error || r.status);
-        prevTitle.textContent = d.title || '(empty)';
-        prevDesc.textContent = d.description || '';
-      } catch (e) {
-        prevTitle.textContent = 'Failed to load: ' + e.message;
-        prevDesc.textContent = '';
-      }
-    } else {
-      preview.style.display = 'none'; manual.classList.add('open');
+  function showFlash(message, kind) {
+    let stack = document.querySelector('.toast-stack');
+    if (!stack) {
+      stack = document.createElement('div');
+      stack.className = 'toast-stack';
+      document.body.appendChild(stack);
+    }
+    const toast = document.createElement('div');
+    toast.className = 'toast toast-' + (kind || 'info');
+    toast.textContent = message;
+    toast.onclick = () => toast.remove();
+    stack.appendChild(toast);
+    setTimeout(() => toast.remove(), kind === 'error' ? 6000 : 3500);
+  }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  }
+
+  // --- source fields: from video (read-only) vs manual (editable) ----------
+  async function fetchMeta(notify) {
+    try {
+      const r = await fetch({{ url_for('translate_preview', stream_id=stream.id)|tojson }},
+                            {headers: {'X-Requested-With': 'XMLHttpRequest'}});
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status);
+      titleInput.value = d.title || '';
+      descInput.value = d.description || '';
+      if (notify) showFlash('Pulled the current title & description from YouTube', 'ok');
+      return true;
+    } catch (e) {
+      if (notify) showFlash('Fetch failed: ' + e.message, 'error');
+      else titleInput.placeholder = 'Couldn\u2019t fetch: ' + e.message;
+      return false;
     }
   }
-  document.querySelectorAll('input[name="translate_source"]').forEach(r => r.addEventListener('change', loadPreview));
-  document.getElementById('trRefresh')?.addEventListener('click', loadPreview);
-  descToggle.addEventListener('click', () => {
-    const open = prevDesc.classList.toggle('open');
-    descToggle.textContent = open ? 'Hide description' : 'Show description';
-  });
-  if (seg('translate_source') === 'video') loadPreview(); else manual.classList.add('open');
+  function applyMode(initial) {
+    const fromVideo = seg('translate_source') === 'video';
+    titleInput.readOnly = fromVideo;
+    descInput.readOnly = fromVideo;
+    titleInput.classList.toggle('readonly', fromVideo);
+    descInput.classList.toggle('readonly', fromVideo);
+    if (fromVideo) fetchMeta(!initial);  // always pull fresh values; toast only on explicit clicks
+  }
+  document.querySelectorAll('input[name="translate_source"]').forEach(
+    r => r.addEventListener('change', () => applyMode(false)));
+  document.getElementById('trRefresh').addEventListener('click', () => fetchMeta(true));
 
-  // --- language chips -----------------------------------------------------
+  // --- what to localize: hide the part that won't be touched ----------------
+  function applyParts() {
+    const p = seg('translate_parts');
+    // display:none keeps the input submitting its value — the translation
+    // still needs both texts as source context.
+    titleRow.style.display = (p === 'description') ? 'none' : '';
+    descRow.style.display = (p === 'title') ? 'none' : '';
+  }
+  document.querySelectorAll('input[name="translate_parts"]').forEach(
+    r => r.addEventListener('change', applyParts));
+
+  // --- language chips -------------------------------------------------------
   const chips = document.getElementById('trChips');
   const langBoxes = [...document.querySelectorAll('#trLangs input')];
   const byCode = Object.fromEntries(langBoxes.map(b => [b.value, b.closest('label').textContent.trim()]));
@@ -248,30 +269,13 @@
   langsToggle.addEventListener('change', () =>
     document.getElementById('trLangsWrap').classList.toggle('open', langsToggle.checked));
 
-  // --- run translation ------------------------------------------------------
+  // --- run translation --------------------------------------------------------
   function renderLog(entries) {
     logBox.innerHTML = entries.map(e => {
       const cls = 'k-' + (e.kind || 'info');
       return `<div class="${cls}">[${e.lang || '*'}] ${e.kind}: ${escapeHtml(e.detail)}</div>`;
     }).join('');
     logBox.scrollTop = logBox.scrollHeight;
-  }
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-  }
-  function showFlash(message, kind) {  // dashboard defines one; edit page needs its own
-    let stack = document.querySelector('.toast-stack');
-    if (!stack) {
-      stack = document.createElement('div');
-      stack.className = 'toast-stack';
-      document.body.appendChild(stack);
-    }
-    const toast = document.createElement('div');
-    toast.className = 'toast toast-' + (kind || 'info');
-    toast.textContent = message;
-    toast.onclick = () => toast.remove();
-    stack.appendChild(toast);
-    setTimeout(() => toast.remove(), kind === 'error' ? 6000 : 3500);
   }
 
   document.getElementById('trRun').addEventListener('click', async () => {
@@ -318,5 +322,9 @@
       } catch (e) { /* transient */ }
     }, 1500);
   }
+
+  // initial state
+  applyParts();
+  applyMode(true);
 })();
 </script>
