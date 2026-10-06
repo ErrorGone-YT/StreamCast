@@ -237,6 +237,25 @@ def save_provider_registry(reg):
     eng.save_provider_registry(reg)
 
 
+_provider_alerts = {}  # provider_id -> {"status", "detail", "seen"} raised by live jobs
+
+
+def set_provider_alert(provider_id, status, detail):
+    """Record a live problem seen during an actual translation (e.g. HTTP 402):
+    a key can pass the models list and even a tiny probe while having no
+    balance for a real workload."""
+    _provider_alerts[provider_id] = {"status": status, "detail": str(detail)[:160],
+                                     "seen": time.strftime("%Y-%m-%d %H:%M")}
+
+
+def clear_provider_alert(provider_id):
+    _provider_alerts.pop(provider_id, None)
+
+
+def get_provider_alerts():
+    return dict(_provider_alerts)
+
+
 def check_provider_keys(provider_id):
     """Validate each API key of a provider (ok / frozen / dead / no balance).
 
@@ -279,7 +298,7 @@ def check_provider_keys(provider_id):
                 headers={"Authorization": f"Bearer {key}",
                          "Content-Type": "application/json"},
                 json={"model": provider.get("model") or "gpt-4o-mini",
-                      "max_tokens": 1,
+                      "max_tokens": 64,
                       "messages": [{"role": "user", "content": "hi"}]},
                 timeout=20)
             if completion.status_code == 200:

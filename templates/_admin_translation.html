@@ -122,9 +122,11 @@
 
   function providerRow(p) {
     const active = REG.active === p.id;
+    const alert = (DATA.alerts || {})[p.id];
     return `<div class="tr-adm-provider ${active ? 'active' : ''}" data-id="${esc(p.id)}">
       <div style="flex:1; min-width:180px;">
         <div class="pname">${esc(p.name)} ${active ? '<span class="tr-adm-badge">active</span>' : ''}
+          ${alert ? `<span class="tr-adm-badge bad" title="${esc(alert.detail || '')}">⚠ out of balance (${esc(alert.seen)})</span>` : ''}
           <span class="pmeta">· ${esc(p.kind)}${p.auth ? '' : ' · no key'} · keys: ${p.key_count}</span></div>
         <div class="pmeta">${esc(p.base_url || '—')} · model: ${esc(p.model || '—')}</div>
       </div>

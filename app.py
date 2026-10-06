@@ -855,22 +855,33 @@ def _translation_worker(stream_id, video_id, title, description, languages, part
     job = _TRANSLATION_JOBS[stream_id]
     log = logging.getLogger("streamcast")
     catalog = translator_bridge.language_catalog()
+    provider_id = None
     try:
-        def progress(kind, lang, detail=""):
-            name = catalog.get(lang, lang) if lang else ""
-            with _TRANSLATION_JOBS_LOCK:
-                if kind == "ok":
-                    job["done"] += 1
-                    line = f"✓ {lang} — {name}: translation applied"
-                elif kind == "fail":
-                    line = f"✗ {lang} — {name}: failed — {str(detail)[:120]}"
-                elif kind == "retry":
-                    marker = "⚠" if ("402" in str(detail) or "insufficient" in str(detail).lower()) else "⟳"
-                    line = f"{marker} {lang} — {name}: {str(detail)[:100]} — retrying…"
-                else:
-                    line = str(detail)[:160]
-                job["log"].append({"kind": kind, "lang": lang, "detail": line})
-                job["log"] = job["log"][-200:]
+        provider_id = ((translator_bridge.engine.get_active_provider() or {}) .get("id"))
+    except Exception:
+        pass
+
+    def progress(kind, lang, detail=""):
+        name = catalog.get(lang, lang) if lang else ""
+        with _TRANSLATION_JOBS_LOCK:
+            if kind == "ok":
+                job["done"] += 1
+                line = f"✓ {lang} — {name}: translation applied"
+            elif kind == "fail":
+                line = f"✗ {lang} — {name}: failed — {str(detail)[:120]}"
+            elif kind == "retry":
+                is_balance = "402" in str(detail) or "insufficient" in str(detail).lower()
+                if is_balance and provider_id:
+                    translator_bridge.set_provider_alert(
+                        provider_id, "nobalance", f"HTTP 402 during translation ({lang})")
+                marker = "⚠" if is_balance else "⟳"
+                line = f"{marker} {lang} — {name}: {str(detail)[:100]} — retrying…"
+            else:
+                line = str(detail)[:160]
+            job["log"].append({"kind": kind, "lang": lang, "detail": line})
+            job["log"] = job["log"][-200:]
+
+    try:
         result = translator_bridge.run_translation(
             title, description, languages, parts, progress=progress)
         if result["localizations"]:
@@ -1127,6 +1138,7 @@ def translator_settings():
         "registry": translator_bridge.provider_registry_view(),
         "parallel": translator_bridge.parallelism(),
         "vendored": vendored,
+        "alerts": translator_bridge.get_provider_alerts(),
     })
 
 
@@ -1202,6 +1214,9 @@ def translator_provider_check_keys():
         keys = translator_bridge.check_provider_keys(provider_id)
     except ValueError as e:
         return jsonify({"ok": False, "message": str(e)}), 400
+    # A fully healthy check clears a live "out of balance" alert for the provider.
+    if keys and all(k["status"] == "ok" for k in keys):
+        translator_bridge.clear_provider_alert(provider_id)
     return jsonify({"ok": True, "keys": keys})
 
 
