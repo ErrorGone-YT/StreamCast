@@ -309,11 +309,10 @@ def get_provider_alerts():
 def check_provider_keys(provider_id):
     """Validate each API key of a provider (ok / frozen / dead / no balance).
 
-    A GET /models probe alone passes for keys with no money left, so for
-    OpenAI-compatible providers a 1-token completion is sent as well — it
-    costs a fraction of a cent and catches HTTP 402. Budget gateways answer
-    in 20-30 s per request, so the timeouts are generous; the whole check can
-    take a minute or two."""
+    One 1-token completion per key — it catches everything at once (401 dead,
+    402 no balance, 429 frozen) and skips the /models round-trip: budget
+    gateways answer in 30-60 s per request and their /models regularly hangs,
+    so a second request would only double the chance of a false 'unknown'."""
     import requests
     from concurrent.futures import ThreadPoolExecutor
     eng = _load()
@@ -337,16 +336,6 @@ def check_provider_keys(provider_id):
                 if response.status_code == 429:
                     return "frozen", "HTTP 429"
                 return "dead", f"HTTP {response.status_code}"
-            response = requests.get(f"{base}/models",
-                                    headers={"Authorization": f"Bearer {key}"}, timeout=40)
-            if response.status_code != 200:
-                if response.status_code == 429:
-                    return "frozen", "HTTP 429"
-                return "dead", f"HTTP {response.status_code}"
-            # The key exists — now check it can actually run a completion
-            # (catches accounts with no balance: HTTP 402). A completion can be
-            # slow on budget gateways, so a timeout here means "unknown", not
-            # "dead": the key was accepted by /models.
             try:
                 completion = requests.post(
                     f"{base}/chat/completions",
@@ -355,16 +344,24 @@ def check_provider_keys(provider_id):
                     json={"model": provider.get("model") or "gpt-4o-mini",
                           "max_tokens": 1,
                           "messages": [{"role": "user", "content": "hi"}]},
-                    timeout=75)
+                    timeout=90)
             except requests.Timeout:
-                return "ok", "key accepted; completion probe timed out (provider slow) — balance not verified"
+                # Slow/unreachable provider says nothing about the key itself.
+                return "unknown", "provider too slow — no answer in 90 s"
             if completion.status_code == 200:
                 return "ok", ""
             if completion.status_code == 402:
                 return "nobalance", "HTTP 402 — insufficient balance"
             if completion.status_code == 429:
                 return "frozen", "HTTP 429"
-            return "dead", f"HTTP {completion.status_code}"
+            if completion.status_code in (401, 403, 404):
+                return "dead", f"HTTP {completion.status_code}"
+            detail = ""
+            try:
+                detail = completion.json().get("error", {}).get("message", "")
+            except ValueError:
+                detail = completion.text[:80]
+            return "dead", f"HTTP {completion.status_code} — {detail[:80]}"
         except requests.Timeout:
             # Unreachable provider says nothing about the keys themselves.
             return "unknown", "provider unreachable (timeout) — status unknown"
