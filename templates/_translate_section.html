@@ -192,9 +192,13 @@ try {
   const enable = document.getElementById('translate_enabled');
   enable.addEventListener('change', () => card.classList.toggle('tr-collapsed', !enable.checked));
   {% else %}
-  // Create page: pre-configure languages only — the card stays expanded.
-  document.querySelector('#translateSection .tr-card')?.classList.remove('tr-collapsed');
+  // Create page: the toggle works the same way — collapsed until enabled.
+  const card = document.querySelector('#translateSection .tr-card');
+  const enable = document.getElementById('translate_enabled');
+  if (!card || !enable) return;
+  enable.addEventListener('change', () => card.classList.toggle('tr-collapsed', !enable.checked));
   {% endif %}
+  const seg = (name) => document.querySelector(`input[name="${name}"]:checked`)?.value;
   const titleInput = document.getElementById('trTitle');
   const descInput = document.getElementById('trDesc');
   const titleRow = document.getElementById('trTitleRow');
@@ -254,7 +258,8 @@ try {
     }
   }
   function applyMode(initial) {
-    const fromVideo = seg('translate_source') === 'video';
+    // On the create page there is nothing to fetch yet — fields stay editable.
+    const fromVideo = !!STREAM_ID && seg('translate_source') === 'video';
     // From video: fields show YouTube values and are locked against editing.
     // Manual: same fields, freely editable.
     titleInput.readOnly = fromVideo;
