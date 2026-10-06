@@ -873,6 +873,10 @@ def _translation_worker(stream_id, video_id, title, description, languages, part
         result = translator_bridge.run_translation(
             title, description, languages, parts, progress=progress)
         if result["localizations"]:
+            with _TRANSLATION_JOBS_LOCK:
+                job["log"].append({"kind": "info", "lang": "",
+                                   "detail": f"▸ Applying {len(result['localizations'])} "
+                                             f"localization(s) to the video…"})
             translator_bridge.update_video_localizations(
                 video_id, title, description, "en", result["localizations"])
         applied = list(result["localizations"])
@@ -941,7 +945,10 @@ def stream_translate(stream_id):
         _TRANSLATION_JOBS[stream_id] = {
             "running": True, "done": 0, "total": len(languages),
             "applied": 0, "error": "", "started": time.time(),
-            "video_id": video_id, "log": [],
+            "video_id": video_id,
+            "log": [{"kind": "info", "lang": "",
+                     "detail": f"▸ Starting translation into {len(languages)} language(s): "
+                               f"{', '.join(languages)}"}],
         }
         job = _TRANSLATION_JOBS[stream_id]
     parts = stream["translate_parts"] or "all"
@@ -1063,20 +1070,24 @@ def oauth2callback():
                                        redirect_uri=redirect_uri, state=session["oauth_state"])
         flow.fetch_token(authorization_response=request.url)
         credentials = flow.credentials
-        token_file = "oauth_token.pickle"
+        # A token file per connect, so several channels can stay authorized.
+        token_file = f"oauth_token_{uuid.uuid4().hex[:8]}.pickle"
         with open(translator_bridge.os.path.join(
                 translator_bridge.data_dir(), token_file), "wb") as f:
             pickle.dump(credentials, f)
         profiles = eng.load_channel_profiles()
-        profile = next((p for p in profiles["profiles"]), None)
-        if profile is None:
-            profile = {"id": "channel", "name": "Channel", "playlists": [],
-                       "default_playlists": []}
-            profiles["profiles"].append(profile)
-        profile.update({"token_file": token_file,
-                        "client_secrets_file": "client_secrets.json"})
+        profile = {"id": f"channel_{uuid.uuid4().hex[:6]}", "name": "Channel",
+                   "token_file": token_file,
+                   "client_secrets_file": "client_secrets.json",
+                   "playlists": [], "default_playlists": []}
+        profiles["profiles"].append(profile)
         youtube = googleapiclient.discovery.build("youtube", "v3", credentials=credentials)
         eng.refresh_profile_identity(youtube, profile, profiles)
+        # One profile per channel: reconnecting the same channel replaces its
+        # old entry instead of piling up duplicates.
+        profiles["profiles"] = [p for p in profiles["profiles"]
+                                if p is profile or p.get("channel_id") != profile.get("channel_id")]
+        eng.save_channel_profiles(profiles)
         translator_bridge._yt_client = None  # force a client rebuild for the new token
         flash(f"YouTube channel connected: {profile.get('channel_title', '')}", "ok")
     except Exception as e:

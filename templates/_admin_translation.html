@@ -67,9 +67,14 @@
 
   // ---------- channel + engine + parallel sections (static shell) ----------
   function channelHtml(st) {
-    const c = st.channel;
-    const conn = c
-      ? `<span class="tr-adm-badge">connected</span> <b>${esc(c.title)}</b> <span class="pmeta">${esc(c.id || '')}</span>`
+    const chans = st.channels || [];
+    const list = chans.length
+      ? chans.map((c, i) =>
+          `<div class="tr-adm-row" style="gap:8px;">
+             <span class="tr-adm-badge">${i === chans.length - 1 ? 'active' : 'connected'}</span>
+             <b>${esc(c.title || 'Unknown channel')}</b>
+             <span class="pmeta">${esc(c.id || '')}</span>
+           </div>`).join('')
       : `<span class="tr-adm-badge bad">not connected</span> <span class="pmeta">upload your OAuth client secrets, then click Connect</span>`;
     const secrets = DATA.has_secrets
       ? `<form method="get" action="/admin/translator/connect" style="margin:0">
@@ -80,10 +85,11 @@
                   style="font:inherit; font-size:13px; color:var(--text);">
            <button type="submit" class="btn btn-primary">Upload client_secrets.json</button>
          </form>`;
-    return `<div class="tr-adm-row"><span class="tr-label">YouTube channel</span></div>
-            <div class="tr-adm-row">${conn}</div>
+    return `<div class="tr-adm-row"><span class="tr-label">YouTube channels</span></div>
+            <div style="display:flex; flex-direction:column; gap:6px;">${list}</div>
             <div class="tr-adm-row">${secrets}</div>
-            <p class="hint" style="margin:0">The OAuth redirect is <code>${location.origin}/oauth2callback</code> —
+            <p class="hint" style="margin:0">The last connected channel is used for translations.
+               The OAuth redirect is <code>${location.origin}/oauth2callback</code> —
                add it to the authorized redirect URIs of your Google Cloud OAuth client.</p>`;
   }
 

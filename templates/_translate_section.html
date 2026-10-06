@@ -158,15 +158,14 @@
         </div>
       </div>
 
-      {% if stream %}
       <div class="tr-log" id="trLog"></div>
       <div class="tr-actions">
         <button type="button" class="btn btn-primary" id="trRun">Translate now</button>
         <div class="tr-progress" id="trProgress" style="display:none;"><div></div></div>
         <span class="hint" id="trStatus" style="margin:0;"></span>
       </div>
-      {% else %}
-      <p class="hint" style="margin:0;">💾 Pre-configure the languages here — after the stream is saved, the Translate button appears on this page.</p>
+      {% if not stream %}
+      <p class="hint" style="margin:0;">Pressing Translate saves this stream and starts the localization right away.</p>
       {% endif %}
       {% endif %}
     </div>
@@ -176,26 +175,11 @@
 <script>
 try {
 (function () {
-  {% if stream %}
-  const PREVIEW_URL = {{ url_for('translate_preview', stream_id=stream.id)|tojson }};
-  const RUN_URL = {{ url_for('stream_translate', stream_id=stream.id)|tojson }};
-  const STATUS_URL = {{ url_for('translate_status', stream_id=stream.id)|tojson }};
-  {% else %}
-  const PREVIEW_URL = null, RUN_URL = null, STATUS_URL = null;
-  {% endif %}
-  const STREAM_ID = {{ stream.id if stream else 'null' }};
-  {% if stream %}
-  const card = document.querySelector('#translateSection .tr-card');
-  if (!card) return;
-  const enable = document.getElementById('translate_enabled');
-  enable.addEventListener('change', () => card.classList.toggle('tr-collapsed', !enable.checked));
-  {% else %}
-  // Create page: the toggle works the same way — collapsed until enabled.
   const card = document.querySelector('#translateSection .tr-card');
   const enable = document.getElementById('translate_enabled');
   if (!card || !enable) return;
+  // The toggle works identically on the create and edit pages.
   enable.addEventListener('change', () => card.classList.toggle('tr-collapsed', !enable.checked));
-  {% endif %}
   const seg = (name) => document.querySelector(`input[name="${name}"]:checked`)?.value;
   const titleInput = document.getElementById('trTitle');
   const descInput = document.getElementById('trDesc');
@@ -234,15 +218,18 @@ try {
   }
 
   // --- source fields: from video (read-only) vs manual (editable) ----------
+  // Reads the URL currently typed in the youtube_url field, so it works on
+  // the create page too (where nothing is saved yet).
   async function fetchMeta(notify) {
-    if (!STREAM_ID) return false;
+    const url = document.getElementById('youtube_url')?.value.trim();
+    if (!url) {
+      if (notify) showFlash('Paste the YouTube URL first', 'error');
+      return false;
+    }
     try {
-      const r = await fetch(PREVIEW_URL,
+      const r = await fetch('/api/yt_lookup?strict=1&url=' + encodeURIComponent(url),
                             {headers: {'X-Requested-With': 'XMLHttpRequest'}});
-      const text = await r.text();
-      let d;
-      try { d = JSON.parse(text); }
-      catch (e) { throw new Error('HTTP ' + r.status + ': ' + text.slice(0, 120)); }
+      const d = await r.json().catch(() => ({}));
       if (d.needs_auth) { goToAuth(); return false; }
       if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status);
       titleInput.value = d.title || '';
@@ -251,13 +238,11 @@ try {
       return true;
     } catch (e) {
       if (notify) showFlash('Fetch failed: ' + e.message, 'error');
-      else titleInput.placeholder = 'Couldn\u2019t fetch: ' + e.message;
       return false;
     }
   }
   function applyMode(initial) {
-    // On the create page there is nothing to fetch yet — fields stay editable.
-    const fromVideo = !!STREAM_ID && seg('translate_source') === 'video';
+    const fromVideo = seg('translate_source') === 'video';
     // From video: fields show YouTube values and are locked against editing.
     // Manual: same fields, freely editable.
     titleInput.readOnly = fromVideo;
@@ -422,18 +407,20 @@ try {
     logBox.scrollTop = logBox.scrollHeight;
   }
 
-  if (document.getElementById('trRun')) {
   document.getElementById('trRun').addEventListener('click', async () => {
     const btn = document.getElementById('trRun');
     btn.disabled = true;
     try {
-      // Save the form first so the job uses exactly what is on screen.
+      // Save the form first so the job uses exactly what is on screen. On the
+      // create page this creates the stream; the redirect lands on /stream/<id>.
       const form = btn.closest('form');
       const saveResp = await fetch(form.action, {method: 'POST', body: new FormData(form)});
       if (!saveResp.ok) throw new Error('save failed (HTTP ' + saveResp.status + ')');
-      const r = await fetch(RUN_URL, {
-        method: 'POST', headers: {'X-Requested-With': 'XMLHttpRequest'}
-      });
+      const m = (saveResp.url || '').match(/\/stream\/(\d+)/);
+      if (!m) throw new Error('could not resolve the stream after saving');
+      const sid = m[1];
+      const r = await fetch(`/stream/translate/${sid}`,
+                            {method: 'POST', headers: {'X-Requested-With': 'XMLHttpRequest'}});
       const d = await r.json().catch(() => ({}));
       if (d.needs_auth) { btn.disabled = false; goToAuth(); return; }
       if (!r.ok || !d.ok) throw new Error(d.message || 'HTTP ' + r.status);
@@ -442,19 +429,18 @@ try {
       logBox.scrollIntoView({behavior: 'smooth', block: 'center'});
       statusEl.textContent = `0 / ${d.total}`;
       bar.style.width = '0%';
-      poll();
+      poll(sid);
     } catch (e) {
       showFlash('Translation: ' + e.message, 'error');
       btn.disabled = false;
     }
   });
-  }
 
-  function poll() {
+  function poll(sid) {
     if (polling) clearInterval(polling);
     polling = setInterval(async () => {
       try {
-        const r = await fetch(STATUS_URL,
+        const r = await fetch(`/api/translate_status/${sid}`,
                               {headers: {'X-Requested-With': 'XMLHttpRequest'}});
         const d = await r.json();
         bar.style.width = d.total ? Math.round(100 * d.done / d.total) + '%' : '0%';

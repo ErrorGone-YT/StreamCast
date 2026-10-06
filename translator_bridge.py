@@ -60,18 +60,16 @@ def ready():
 
 
 def status():
-    """What the admin tile needs: readiness, channel connection, provider."""
+    """What the admin tile needs: readiness, connected channels, provider."""
     eng = _load()
     if eng is None:
         return {"ready": False, "error": load_error, "channel": None,
-                "active_provider": None, "providers": []}
-    channel = None
+                "channels": [], "active_provider": None, "providers": []}
+    channels = []
     try:
         profiles = eng.load_channel_profiles().get("profiles", [])
-        if profiles:
-            p = profiles[0]
-            channel = {"id": p.get("channel_id"), "title": p.get("channel_title"),
-                       "logo_url": p.get("logo_url", "")}
+        channels = [{"id": p.get("channel_id"), "title": p.get("channel_title"),
+                     "logo_url": p.get("logo_url", "")} for p in profiles]
     except Exception:
         pass
     try:
@@ -84,7 +82,9 @@ def status():
     except Exception:
         active = None
         providers = []
-    return {"ready": True, "error": None, "channel": channel,
+    return {"ready": True, "error": None,
+            "channel": channels[-1] if channels else None,  # active = last connected
+            "channels": channels,
             "active_provider": active.get("name") if active else None,
             "providers": providers}
 
@@ -279,7 +279,8 @@ _yt_client = None  # cached authorized client (credentials refresh themselves)
 
 
 def get_youtube_client():
-    """Authorized YouTube client for the connected channel, or None."""
+    """Authorized YouTube client for the active channel (the last connected
+    one), or None."""
     global _yt_client
     if _yt_client is not None:
         return _yt_client
@@ -290,7 +291,7 @@ def get_youtube_client():
         profiles = eng.load_channel_profiles().get("profiles", [])
         if not profiles:
             return None
-        _yt_client = eng.authenticate(profiles[0])
+        _yt_client = eng.authenticate(profiles[-1])
         return _yt_client
     except Exception:
         return None
