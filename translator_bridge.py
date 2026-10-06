@@ -107,14 +107,45 @@ def save_secrets(raw_bytes):
     return path
 
 
+_EN_NAMES = {
+    "af": "Afrikaans", "az": "Azerbaijani", "id": "Indonesian", "ms": "Malay",
+    "bs": "Bosnian", "ca": "Catalan", "cs": "Czech", "cy": "Welsh", "da": "Danish",
+    "de": "German", "et": "Estonian", "en": "English", "en-CA": "English (Canada)",
+    "en-GB": "English (UK)", "en-IN": "English (India)", "en-US": "English (US)",
+    "es": "Spanish", "es-419": "Spanish (Latin America)", "es-US": "Spanish (US)",
+    "eu": "Basque", "fil": "Filipino", "fr": "French", "fr-CA": "French (Canada)",
+    "gl": "Galician", "gu": "Gujarati", "hr": "Croatian", "is": "Icelandic",
+    "it": "Italian", "jv": "Javanese", "kn": "Kannada", "la": "Latin",
+    "lv": "Latvian", "lt": "Lithuanian", "hu": "Hungarian", "nl": "Dutch",
+    "ne": "Nepali", "no": "Norwegian", "or": "Odia", "pa": "Punjabi",
+    "pl": "Polish", "pt": "Portuguese (Brazil)", "pt-PT": "Portuguese (Portugal)",
+    "ro": "Romanian", "rm": "Romansh", "si": "Sinhala", "sk": "Slovak",
+    "sl": "Slovenian", "fi": "Finnish", "sv": "Swedish", "sw": "Swahili",
+    "tl": "Tagalog", "ta": "Tamil", "te": "Telugu", "th": "Thai",
+    "vi": "Vietnamese", "tr": "Turkish", "uk": "Ukrainian", "ur": "Urdu",
+    "zh-Hans": "Chinese (Simplified)", "zh-Hant": "Chinese (Traditional)",
+    "zh-TW": "Chinese (Taiwan)", "zu": "Zulu", "el": "Greek", "bg": "Bulgarian",
+    "ru": "Russian", "sr": "Serbian", "mk": "Macedonian", "kk": "Kazakh",
+    "ky": "Kyrgyz", "hy": "Armenian", "ka": "Georgian", "mn": "Mongolian",
+    "my": "Burmese", "km": "Khmer", "lo": "Lao", "he": "Hebrew", "ar": "Arabic",
+    "fa": "Persian", "sd": "Sindhi", "am": "Amharic", "yo": "Yoruba",
+    "ha": "Hausa", "ig": "Igbo", "qu": "Quechua", "nso": "Sepedi",
+    "bn": "Bengali", "hi": "Hindi", "ja": "Japanese", "ko": "Korean",
+    "so": "Somali", "sq": "Albanian",
+}
+
+
 def language_catalog():
+    """{code: English display name} — falls back to the engine's native name
+    for codes not in the English map."""
     eng = _load()
     if eng is None:
-        return {}
+        return dict(_EN_NAMES)
     try:
-        return eng.available_language_catalog()
+        native = eng.available_language_catalog()
     except Exception:
-        return {}
+        native = {}
+    return {code: _EN_NAMES.get(code, name) for code, name in native.items()}
 
 
 def language_presets():

@@ -121,22 +121,7 @@
 
       <div class="tr-row">
         <span class="tr-label">Languages</span>
-        {% if tr_presets %}
-        <select id="trPreset" class="tr-field" style="max-width:260px;">
-          <option value="">Load a preset…</option>
-          {% for name in tr_presets %}
-          <option value="{{ name }}">{{ name }} ({{ tr_presets[name]|length }})</option>
-          {% endfor %}
-        </select>
-        {% endif %}
         <div class="tr-chips" id="trChips"></div>
-        <label class="tr-langs-toggle">
-          <span class="switch">
-            <input type="checkbox" id="trLangsToggle">
-            <span class="slider round"></span>
-          </span>
-          Show full language list ({{ tr_catalog|length }})
-        </label>
         <div class="tr-preset-row">
           <select id="trPreset" class="tr-field" style="max-width:260px;">
             <option value="">Language preset…</option>
@@ -144,10 +129,19 @@
             <option value="{{ name }}">{{ name }} ({{ tr_presets[name]|length }})</option>
             {% endfor %}
           </select>
+          <span class="hint" id="trPresetState" style="margin:0; display:none; color:#f0a020;">unsaved changes</span>
           <button type="button" class="btn" id="trPresetApply" title="Apply the selected preset">✓ Apply</button>
-          <button type="button" class="btn" id="trPresetSave" title="Save the current selection as a preset">+ Save current</button>
+          <button type="button" class="btn" id="trPresetSave" title="Overwrite the selected preset with the current selection">+ Save current</button>
+          <button type="button" class="btn" id="trPresetSaveAs" title="Save the current selection as a new preset">⎘ Save as…</button>
           <button type="button" class="btn" id="trPresetDelete" title="Delete the selected preset" style="color:#d9534f;">✕ Delete</button>
         </div>
+        <label class="tr-langs-toggle">
+          <span class="switch">
+            <input type="checkbox" id="trLangsToggle">
+            <span class="slider round"></span>
+          </span>
+          Show full language list ({{ tr_catalog|length }})
+        </label>
         <div class="tr-langs-wrap" id="trLangsWrap">
           <div class="tr-langs" id="trLangs">
             {% for code, name in tr_catalog.items()|sort(attribute='1') %}
@@ -275,34 +269,67 @@
 
   const preset = document.getElementById('trPreset');
   const PRESETS = {{ tr_presets|tojson }};
+  const presetState = document.getElementById('trPresetState');
+  const selectedCodes = () => langBoxes.filter(b => b.checked).map(b => b.value);
+
+  function updatePresetState() {
+    const base = PRESETS[preset.value];
+    const dirty = !!base &&
+      JSON.stringify([...selectedCodes()].sort()) !== JSON.stringify([...base].sort());
+    presetState.style.display = dirty ? '' : 'none';
+  }
+  langBoxes.forEach(b => b.addEventListener('change', updatePresetState));
+  preset.addEventListener('change', updatePresetState);
+
+  async function savePreset(name, codes) {
+    const r = await fetch('/api/translator/preset/save', {
+      method: 'POST',
+      headers: {'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/json'},
+      body: JSON.stringify({name, codes})
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.message || 'HTTP ' + r.status);
+    PRESETS[name] = d.presets[name];
+    if (![...preset.options].some(o => o.value === name)) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name + ' (' + codes.length + ')';
+      preset.append(opt);
+    }
+    preset.value = name;
+    updatePresetState();
+  }
+
   document.getElementById('trPresetApply').addEventListener('click', () => {
     if (!preset.value) return showFlash('Pick a preset first', 'error');
     const codes = PRESETS[preset.value] || [];
     langBoxes.forEach(b => { b.checked = codes.includes(b.value); });
     renderChips();
+    updatePresetState();
   });
   document.getElementById('trPresetSave').addEventListener('click', async () => {
-    const name = prompt('Preset name:');
-    if (!name || !name.trim()) return;
-    const codes = langBoxes.filter(b => b.checked).map(b => b.value);
+    const codes = selectedCodes();
     if (!codes.length) return showFlash('Select at least one language first', 'error');
+    let name = preset.value;
+    if (!name) {  // nothing selected yet — behave like Save as
+      name = prompt('Preset name:');
+      if (!name || !name.trim()) return;
+      name = name.trim();
+    }
     try {
-      const r = await fetch('/api/translator/preset/save', {
-        method: 'POST',
-        headers: {'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/json'},
-        body: JSON.stringify({name: name.trim(), codes})
-      });
-      const d = await r.json();
-      if (!r.ok || !d.ok) throw new Error(d.message || 'HTTP ' + r.status);
-      Object.assign(PRESETS, d.presets);
-      if (![...preset.options].some(o => o.value === name.trim())) {
-        const opt = document.createElement('option');
-        opt.value = name.trim();
-        opt.textContent = name.trim() + ' (' + codes.length + ')';
-        preset.append(opt);
-      }
-      preset.value = name.trim();
-      showFlash('Preset saved', 'ok');
+      await savePreset(name, codes);
+      showFlash('Preset "' + name + '" saved', 'ok');
+    } catch (e) { showFlash('Save preset: ' + e.message, 'error'); }
+  });
+  document.getElementById('trPresetSaveAs').addEventListener('click', async () => {
+    const codes = selectedCodes();
+    if (!codes.length) return showFlash('Select at least one language first', 'error');
+    const suggested = preset.value ? preset.value + ' copy' : 'My preset';
+    const name = prompt('Save as new preset:', suggested);
+    if (!name || !name.trim()) return;
+    try {
+      await savePreset(name.trim(), codes);
+      showFlash('Preset "' + name.trim() + '" saved', 'ok');
     } catch (e) { showFlash('Save preset: ' + e.message, 'error'); }
   });
   document.getElementById('trPresetDelete').addEventListener('click', async () => {
@@ -319,6 +346,7 @@
       delete PRESETS[preset.value];
       preset.options[preset.selectedIndex]?.remove();
       preset.value = '';
+      updatePresetState();
       showFlash('Preset deleted', 'ok');
     } catch (e) { showFlash('Delete preset: ' + e.message, 'error'); }
   });

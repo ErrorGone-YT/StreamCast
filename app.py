@@ -807,10 +807,10 @@ def _translation_video_id(stream):
 @ajax_required
 def translate_preview(stream_id):
     """Current source title/description the translation would start from."""
+    _owned_stream(stream_id)
     stream = db.get_stream(stream_id)
     if not stream:
         abort(404)
-    _owned_stream(stream)
     if (stream["translate_source"] or "video") == "manual":
         return jsonify({"source": "manual",
                         "title": stream["translate_title"] or "",
@@ -821,6 +821,8 @@ def translate_preview(stream_id):
     try:
         meta = translator_bridge.fetch_video_meta(video_id)
     except Exception as e:
+        logging.getLogger("streamcast").warning("Preview fetch for stream %d failed: %s",
+                                                stream_id, e)
         return jsonify({"error": str(e)}), 502
     return jsonify({"source": "video", "video_id": video_id,
                     "title": meta.get("title", ""),
