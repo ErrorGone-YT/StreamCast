@@ -164,13 +164,14 @@
 </div>
 
 <script>
+try {
 (function () {
   const card = document.querySelector('#translateSection .tr-card');
   if (!card) return;
   const enable = document.getElementById('translate_enabled');
   enable.addEventListener('change', () => card.classList.toggle('tr-collapsed', !enable.checked));
 
-  const seg = (name) => document.querySelector(`input[name="${name}"]:checked`);
+  const seg = (name) => document.querySelector(`input[name="${name}"]:checked`)?.value;
   const titleInput = document.getElementById('trTitle');
   const descInput = document.getElementById('trDesc');
   const titleRow = document.getElementById('trTitleRow');
@@ -418,4 +419,5 @@
   applyParts();
   applyMode(true);
 })();
+} catch (e) { window.__trLoadErr = e.message + ' @' + e.lineNumber; }
 </script>
