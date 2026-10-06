@@ -1151,7 +1151,6 @@ def translator_provider_save():
     entry = data.get("entry") or {}
     if not entry.get("name"):
         return jsonify({"ok": False, "message": "Provider name is required"}), 400
-    import hashlib
     reg = translator_bridge.provider_registry()
     keep = set(data.get("keep", []))
     new_keys = [k for k in re.split(r"[,\s]+", str(data.get("new_keys", ""))) if k]
@@ -1160,12 +1159,15 @@ def translator_provider_save():
     existing = next((p for p in reg["providers"] if p["id"] == clean.get("id")), None)
     if existing:
         if existing.get("auth"):
+            # `keep` carries the masked key strings the UI showed (same format
+            # as provider_registry_view) — match on them, not on hashes.
+            kept = set(keep)
             merged = [k for k in existing.get("api_keys", [])
-                      if hashlib.sha1(k.encode()).hexdigest()[:10] in keep] + new_keys
+                      if translator_bridge._mask_key(k) in kept]
         else:
             merged = []
         existing.update(clean)
-        existing["api_keys"] = merged
+        existing["api_keys"] = merged + new_keys
     else:
         eng = translator_bridge.engine
         clean["id"] = eng.profile_slug(clean["name"], {p["id"] for p in reg["providers"]})
