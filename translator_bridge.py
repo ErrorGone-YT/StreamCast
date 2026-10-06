@@ -301,7 +301,7 @@ def check_provider_keys(provider_id):
                     headers={"Authorization": f"Bearer {key}",
                              "Content-Type": "application/json"},
                     json={"model": provider.get("model") or "gpt-4o-mini",
-                          "max_tokens": 64,
+                          "max_tokens": 1,
                           "messages": [{"role": "user", "content": "hi"}]},
                     timeout=45)
             except requests.Timeout:
