@@ -943,13 +943,19 @@ def stream_translate(stream_id):
         old = _TRANSLATION_JOBS.get(stream_id)
         if old and old["running"]:
             return jsonify({"ok": False, "message": "A translation is already running"}), 409
+        provider_name = None
+        try:
+            provider_name = (translator_bridge.engine.get_active_provider() or {}).get("name")
+        except Exception:
+            pass
         _TRANSLATION_JOBS[stream_id] = {
             "running": True, "done": 0, "total": len(languages),
             "applied": 0, "error": "", "started": time.time(),
             "video_id": video_id,
             "log": [{"kind": "info", "lang": "",
                      "detail": f"▸ Starting translation into {len(languages)} language(s): "
-                               f"{', '.join(languages)}"}],
+                               f"{', '.join(languages)}"
+                               + (f" — provider: {provider_name}" if provider_name else "")}],
         }
         job = _TRANSLATION_JOBS[stream_id]
     parts = stream["translate_parts"] or "all"
