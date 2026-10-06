@@ -77,10 +77,10 @@
 <div class="field" id="translateSection">
   <div class="tr-card {{ 'tr-collapsed' if not stream.translate_enabled }}">
     <div class="tr-head">
-      <span class="switch">
+      <label class="switch" title="Enable metadata localization">
         <input type="checkbox" id="translate_enabled" name="translate_enabled" {{ 'checked' if stream.translate_enabled }}>
         <span class="slider round"></span>
-      </span>
+      </label>
       <div>
         <div class="tr-title">Metadata localization</div>
         <p class="hint">Translate this stream's title &amp; description into multiple languages and apply them to the YouTube video.</p>
