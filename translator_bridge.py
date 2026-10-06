@@ -523,6 +523,8 @@ def run_translation(source_title, source_description, languages, parts,
                 code = futures[future]
                 try:
                     localizations[code] = future.result()
+                    if progress:
+                        progress("ok", code)  # let the UI advance per language
                 except Exception as error:
                     errors.append(f"{code}: {str(error).splitlines()[0]}")
 

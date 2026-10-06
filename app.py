@@ -866,7 +866,8 @@ def _translation_worker(stream_id, video_id, title, description, languages, part
         with _TRANSLATION_JOBS_LOCK:
             if kind == "ok":
                 job["done"] += 1
-                line = f"✓ {lang} — {name}: translation applied"
+                line = (f"✓ {lang} — {name}: translated "
+                        f"({job['done']}/{job['total']})")
             elif kind == "fail":
                 line = f"✗ {lang} — {name}: failed — {str(detail)[:120]}"
             elif kind == "retry":
@@ -893,13 +894,12 @@ def _translation_worker(stream_id, video_id, title, description, languages, part
                 video_id, title, description, "en", result["localizations"])
         applied = list(result["localizations"])
         with _TRANSLATION_JOBS_LOCK:
-            job["done"] = len(applied)
             job["running"] = False
             job["error"] = "; ".join(result["errors"]) if result["errors"] else ""
             job["applied"] = len(applied)
-            for code in applied:
-                job["log"].append({"kind": "ok", "lang": code,
-                                   "detail": f"✓ {code} — {catalog.get(code, code)}: "
+            if applied:
+                job["log"].append({"kind": "ok", "lang": "",
+                                   "detail": f"✓ {len(applied)} localization(s) "
                                              f"applied to the video"})
             if result["errors"]:
                 job["log"].append({"kind": "fail", "lang": "",
@@ -960,7 +960,9 @@ def stream_translate(stream_id):
         except Exception:
             pass
         _TRANSLATION_JOBS[stream_id] = {
-            "running": True, "done": 0, "total": len(languages),
+            "running": True, "done": 0,
+            # 'en' is the passthrough source: it never fires a completion event
+            "total": max(1, len([c for c in languages if c and c != "en"])),
             "applied": 0, "error": "", "started": time.time(),
             "video_id": video_id,
             "log": [{"kind": "info", "lang": "",
