@@ -71,7 +71,7 @@
     const conn = c
       ? `<span class="tr-adm-badge">connected</span> <b>${esc(c.title)}</b> <span class="pmeta">${esc(c.id || '')}</span>`
       : `<span class="tr-adm-badge bad">not connected</span> <span class="pmeta">upload your OAuth client secrets, then click Connect</span>`;
-    const secrets = st.has_secrets
+    const secrets = DATA.has_secrets
       ? `<form method="get" action="/admin/translator/connect" style="margin:0">
            <button type="submit" class="btn btn-primary">Connect / reconnect channel</button>
          </form>`
@@ -87,8 +87,8 @@
                add it to the authorized redirect URIs of your Google Cloud OAuth client.</p>`;
   }
 
-  function engineHtml(st) {
-    const v = st.vendored || {};
+  function engineHtml() {
+    const v = DATA.vendored || {};
     return `<div class="tr-adm-row"><span class="tr-label">Engine</span></div>
       <div class="tr-adm-row">
         <span class="pmeta">Vendored: <b>${esc(v.sha || 'unknown')}</b>${v.date ? ' · ' + esc(v.date.slice(0, 10)) : ''}</span>
@@ -211,7 +211,7 @@
       <div id="trProviders" style="display:flex; flex-direction:column; gap:8px;">
         ${REG.providers.map(providerRow).join('') || '<div class="hint">No providers yet.</div>'}
       </div>
-      ${engineHtml(DATA.status)}`;
+      ${engineHtml()}`;
     document.getElementById('trParallelSave').onclick = async () => {
       try {
         await api('/api/translator/parallel', {value: document.getElementById('trParallel').value.trim()});
