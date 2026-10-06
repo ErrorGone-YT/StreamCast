@@ -138,13 +138,20 @@
       const r = await fetch('/api/yt_lookup?url=' + encodeURIComponent(url),
                             {headers: {'X-Requested-With': 'XMLHttpRequest'}});
       const d = await r.json();
-      const name = document.getElementById('name');
-      const ch = document.getElementById('channel_name');
-      const filled = [];
-      if (d && d.title && !name.value.trim()) { name.value = d.title; filled.push('stream name'); }
-      if (d && d.channel_title && !ch.value.trim()) { ch.value = d.channel_title; filled.push('channel name'); }
-      if (filled.length && window.showFlash) {
-        showFlash('Filled ' + filled.join(' & ') + ' from YouTube', 'ok');
+      if (d && (d.title || d.channel_title)) {
+        // Bring the fields up to date with the actual video — including ones
+        // the user typed manually before pasting the URL.
+        const name = document.getElementById('name');
+        const ch = document.getElementById('channel_name');
+        if (d.title) name.value = d.title;
+        if (d.channel_title) ch.value = d.channel_title;
+        const t = document.getElementById('trTitle');
+        const ds = document.getElementById('trDesc');
+        if (t) t.value = d.title || '';
+        if (ds) ds.value = d.description || '';
+        if (window.showFlash) {
+          showFlash('Updated stream name, channel & translation source from YouTube', 'ok');
+        }
       }
     } catch (e) { /* autofill is best-effort */ }
     finally { busy = false; }

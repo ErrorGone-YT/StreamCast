@@ -966,16 +966,26 @@ def translate_status(stream_id):
 @login_required
 @ajax_required
 def yt_lookup():
-    """Best-effort title/channel lookup for autofilling the create/edit form.
-    Returns {} quietly whenever the engine or the channel isn't available."""
+    """Title/channel/description lookup for a YouTube URL. Default mode is
+    best-effort ({} on any failure) for the form autofill; ?strict=1 returns
+    real errors so the localization Fetch button can show and route them."""
     video_id = _youtube_id(request.args.get("url", ""))
-    if not video_id or not translator_bridge.ready():
+    strict = request.args.get("strict") == "1"
+    if not video_id:
+        if strict:
+            return jsonify({"error": "Not a YouTube video URL"}), 400
         return jsonify({})
-    if translator_bridge.get_youtube_client() is None:
+    if not translator_bridge.ready() or translator_bridge.get_youtube_client() is None:
+        if strict:
+            return jsonify({"error": "YouTube channel is not connected",
+                            "needs_auth": True}), 502
         return jsonify({})
     try:
         return jsonify(translator_bridge.video_lookup(video_id))
-    except Exception:
+    except Exception as e:
+        if strict:
+            return jsonify({"error": str(e)[:200],
+                            "needs_auth": _is_auth_error(e)}), 502
         return jsonify({})
 
 
