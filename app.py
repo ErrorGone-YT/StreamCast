@@ -1012,6 +1012,7 @@ def oauth2callback():
                         "client_secrets_file": "client_secrets.json"})
         youtube = googleapiclient.discovery.build("youtube", "v3", credentials=credentials)
         eng.refresh_profile_identity(youtube, profile, profiles)
+        translator_bridge._yt_client = None  # force a client rebuild for the new token
         flash(f"YouTube channel connected: {profile.get('channel_title', '')}", "ok")
     except Exception as e:
         logging.getLogger("streamcast").warning("OAuth connect failed: %s", e)
@@ -1133,6 +1134,30 @@ def translator_parallel():
         return jsonify({"ok": False, "message": "Invalid value"}), 400
     return jsonify({"ok": True, "parallel": translator_bridge.parallelism(),
                     "saved": saved})
+
+
+@app.route("/api/translator/preset/save", methods=["POST"])
+@login_required
+@ajax_required
+@_translator_api
+def translator_preset_save():
+    data = request.get_json() or {}
+    name = str(data.get("name") or "").strip()
+    codes = [c for c in (data.get("codes") or []) if c]
+    if not name or not codes:
+        return jsonify({"ok": False, "message": "Name and at least one language are required"}), 400
+    translator_bridge.save_preset(name, codes)
+    return jsonify({"ok": True, "presets": translator_bridge.language_presets()})
+
+
+@app.route("/api/translator/preset/delete", methods=["POST"])
+@login_required
+@ajax_required
+@_translator_api
+def translator_preset_delete():
+    name = str((request.get_json() or {}).get("name") or "").strip()
+    translator_bridge.delete_preset(name)
+    return jsonify({"ok": True, "presets": translator_bridge.language_presets()})
 
 
 @app.route("/admin/translator/update", methods=["POST"])

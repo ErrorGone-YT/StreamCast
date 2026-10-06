@@ -127,6 +127,34 @@ def language_presets():
         return {}
 
 
+def save_preset(name, codes):
+    """Create/update a named language preset in ui_settings.json."""
+    if not name:
+        raise ValueError("Preset name is required")
+    path = os.path.join(data_dir(), "ui_settings.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = {}
+    data.setdefault("language_presets", {})[name] = sorted(set(codes))
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def delete_preset(name):
+    path = os.path.join(data_dir(), "ui_settings.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return
+    (data.get("language_presets") or {}).pop(name, None)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
 def parallelism():
     eng = _load()
     if eng is None:
@@ -216,8 +244,14 @@ def check_provider_keys(provider_id):
             for k, (s, d) in zip(keys, verdicts)]
 
 
+_yt_client = None  # cached authorized client (credentials refresh themselves)
+
+
 def get_youtube_client():
     """Authorized YouTube client for the connected channel, or None."""
+    global _yt_client
+    if _yt_client is not None:
+        return _yt_client
     eng = _load()
     if eng is None:
         return None
@@ -225,7 +259,8 @@ def get_youtube_client():
         profiles = eng.load_channel_profiles().get("profiles", [])
         if not profiles:
             return None
-        return eng.authenticate(profiles[0])
+        _yt_client = eng.authenticate(profiles[0])
+        return _yt_client
     except Exception:
         return None
 

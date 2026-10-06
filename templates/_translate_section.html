@@ -34,6 +34,7 @@
   .tr-fields-top { display:flex; align-items:center; gap:8px; }
   .tr-fields-top .hint { margin:0; flex:1; }
   .tr-chips { display:flex; gap:8px; flex-wrap:wrap; }
+  .tr-preset-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   .tr-chip {
     display:inline-flex; align-items:center; gap:6px;
     border:1px solid var(--border-strong); border-radius:999px;
@@ -136,11 +137,22 @@
           </span>
           Show full language list ({{ tr_catalog|length }})
         </label>
+        <div class="tr-preset-row">
+          <select id="trPreset" class="tr-field" style="max-width:260px;">
+            <option value="">Language preset…</option>
+            {% for name in tr_presets %}
+            <option value="{{ name }}">{{ name }} ({{ tr_presets[name]|length }})</option>
+            {% endfor %}
+          </select>
+          <button type="button" class="btn" id="trPresetApply" title="Apply the selected preset">✓ Apply</button>
+          <button type="button" class="btn" id="trPresetSave" title="Save the current selection as a preset">+ Save current</button>
+          <button type="button" class="btn" id="trPresetDelete" title="Delete the selected preset" style="color:#d9534f;">✕ Delete</button>
+        </div>
         <div class="tr-langs-wrap" id="trLangsWrap">
           <div class="tr-langs" id="trLangs">
             {% for code, name in tr_catalog.items()|sort(attribute='1') %}
             <label><input type="checkbox" name="translate_languages" value="{{ code }}"
-                          {{ 'checked' if code in tr_languages }}> {{ name }}</label>
+                          {{ 'checked' if code in tr_languages }}> <b>{{ code }}</b> — {{ name }}</label>
             {% endfor %}
           </div>
         </div>
@@ -198,7 +210,10 @@
     try {
       const r = await fetch({{ url_for('translate_preview', stream_id=stream.id)|tojson }},
                             {headers: {'X-Requested-With': 'XMLHttpRequest'}});
-      const d = await r.json();
+      const text = await r.text();
+      let d;
+      try { d = JSON.parse(text); }
+      catch (e) { throw new Error('HTTP ' + r.status + ': ' + text.slice(0, 120)); }
       if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status);
       titleInput.value = d.title || '';
       descInput.value = d.description || '';
@@ -232,6 +247,8 @@
   }
   document.querySelectorAll('input[name="translate_parts"]').forEach(
     r => r.addEventListener('change', applyParts));
+  applyParts();   // apply the initial state before anything else can fail
+  applyMode(true);
 
   // --- language chips -------------------------------------------------------
   const chips = document.getElementById('trChips');
@@ -258,11 +275,52 @@
 
   const preset = document.getElementById('trPreset');
   const PRESETS = {{ tr_presets|tojson }};
-  preset?.addEventListener('change', () => {
+  document.getElementById('trPresetApply').addEventListener('click', () => {
+    if (!preset.value) return showFlash('Pick a preset first', 'error');
     const codes = PRESETS[preset.value] || [];
-    if (!preset.value) return;
     langBoxes.forEach(b => { b.checked = codes.includes(b.value); });
     renderChips();
+  });
+  document.getElementById('trPresetSave').addEventListener('click', async () => {
+    const name = prompt('Preset name:');
+    if (!name || !name.trim()) return;
+    const codes = langBoxes.filter(b => b.checked).map(b => b.value);
+    if (!codes.length) return showFlash('Select at least one language first', 'error');
+    try {
+      const r = await fetch('/api/translator/preset/save', {
+        method: 'POST',
+        headers: {'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/json'},
+        body: JSON.stringify({name: name.trim(), codes})
+      });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.message || 'HTTP ' + r.status);
+      Object.assign(PRESETS, d.presets);
+      if (![...preset.options].some(o => o.value === name.trim())) {
+        const opt = document.createElement('option');
+        opt.value = name.trim();
+        opt.textContent = name.trim() + ' (' + codes.length + ')';
+        preset.append(opt);
+      }
+      preset.value = name.trim();
+      showFlash('Preset saved', 'ok');
+    } catch (e) { showFlash('Save preset: ' + e.message, 'error'); }
+  });
+  document.getElementById('trPresetDelete').addEventListener('click', async () => {
+    if (!preset.value) return showFlash('Pick a preset first', 'error');
+    if (!confirm('Delete preset "' + preset.value + '"?')) return;
+    try {
+      const r = await fetch('/api/translator/preset/delete', {
+        method: 'POST',
+        headers: {'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/json'},
+        body: JSON.stringify({name: preset.value})
+      });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.message || 'HTTP ' + r.status);
+      delete PRESETS[preset.value];
+      preset.options[preset.selectedIndex]?.remove();
+      preset.value = '';
+      showFlash('Preset deleted', 'ok');
+    } catch (e) { showFlash('Delete preset: ' + e.message, 'error'); }
   });
 
   const langsToggle = document.getElementById('trLangsToggle');
