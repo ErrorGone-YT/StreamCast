@@ -676,6 +676,9 @@ def stream_create():
             quality_mode = "balanced"
         uid, _ = current_user()
         channel_name = request.form.get("channel_name", "").strip()
+        languages = [l for l in request.form.getlist("translate_languages") if l]
+        parts = request.form.get("translate_parts", "all")
+        source = request.form.get("translate_source", "video")
         sid = db.create_stream(
             name,
             channel_name=channel_name,
@@ -684,9 +687,16 @@ def stream_create():
             stream_type=stream_type,
             quality_mode=quality_mode,
             owner_id=uid,  # None for the master/admin: owned by the panel itself
+            translate_enabled=1 if request.form.get("translate_enabled") else 0,
+            translate_parts=parts if parts in ("all", "title", "description") else "all",
+            translate_source=source if source in ("video", "manual") else "video",
+            translate_title=request.form.get("translate_title", "").strip(),
+            translate_description=request.form.get("translate_description", "").strip(),
+            translate_languages=json.dumps(languages),
         )
         return redirect(url_for("stream_detail", stream_id=sid))
-    return render_template("stream_edit.html", stream=None, current_mode="balanced")
+    return render_template("stream_edit.html", stream=None, current_mode="balanced",
+                           **_translate_page_data(None))
 
 
 @app.route("/stream/<int:stream_id>")
@@ -778,10 +788,11 @@ def stream_edit(stream_id):
 def _translate_page_data(stream):
     """Template context for the localization section of the edit page."""
     languages = []
-    try:
-        languages = json.loads(stream["translate_languages"] or "[]")
-    except ValueError:
-        pass
+    if stream:
+        try:
+            languages = json.loads(stream["translate_languages"] or "[]")
+        except ValueError:
+            pass
     data = {
         "tr_ready": translator_bridge.ready(),
         "tr_error": translator_bridge.load_error,
@@ -796,6 +807,13 @@ def _translate_page_data(stream):
         data["tr_catalog"] = translator_bridge.language_catalog()
         data["tr_presets"] = translator_bridge.language_presets()
     return data
+
+
+def _is_auth_error(message):
+    """YouTube API 'Forbidden' — the connected account can't manage this video
+    (or the API isn't enabled for the project). Needs (re-)authorization."""
+    message = str(message)
+    return "403" in message and "forbidden" in message.lower()
 
 
 def _translation_video_id(stream):
@@ -823,7 +841,7 @@ def translate_preview(stream_id):
     except Exception as e:
         logging.getLogger("streamcast").warning("Preview fetch for stream %d failed: %s",
                                                 stream_id, e)
-        return jsonify({"error": str(e)}), 502
+        return jsonify({"error": str(e)[:200], "needs_auth": _is_auth_error(e)}), 502
     return jsonify({"source": "video", "video_id": video_id,
                     "title": meta.get("title", ""),
                     "description": meta.get("description", "")})
@@ -836,34 +854,51 @@ _TRANSLATION_JOBS_LOCK = threading.Lock()
 def _translation_worker(stream_id, video_id, title, description, languages, parts):
     job = _TRANSLATION_JOBS[stream_id]
     log = logging.getLogger("streamcast")
+    catalog = translator_bridge.language_catalog()
     try:
         def progress(kind, lang, detail=""):
+            name = catalog.get(lang, lang) if lang else ""
             with _TRANSLATION_JOBS_LOCK:
                 if kind == "ok":
                     job["done"] += 1
-                job["log"].append({"kind": kind, "lang": lang, "detail": str(detail)[:160]})
+                    line = f"✓ {lang} — {name}: translation applied"
+                elif kind == "fail":
+                    line = f"✗ {lang} — {name}: failed — {str(detail)[:120]}"
+                elif kind == "retry":
+                    line = f"⟳ {lang} — {name}: {str(detail)[:100]} — retrying…"
+                else:
+                    line = str(detail)[:160]
+                job["log"].append({"kind": kind, "lang": lang, "detail": line})
                 job["log"] = job["log"][-200:]
         result = translator_bridge.run_translation(
             title, description, languages, parts, progress=progress)
         if result["localizations"]:
             translator_bridge.update_video_localizations(
                 video_id, title, description, "en", result["localizations"])
+        applied = list(result["localizations"])
         with _TRANSLATION_JOBS_LOCK:
-            job["done"] = len(result["localizations"])
+            job["done"] = len(applied)
             job["running"] = False
             job["error"] = "; ".join(result["errors"]) if result["errors"] else ""
-            job["applied"] = len(result["localizations"])
-            job["log"].append({"kind": "info", "lang": "",
-                               "detail": f"Applied {len(result['localizations'])} "
-                                         f"localization(s) to {video_id}"})
+            job["applied"] = len(applied)
+            for code in applied:
+                job["log"].append({"kind": "ok", "lang": code,
+                                   "detail": f"✓ {code} — {catalog.get(code, code)}: "
+                                             f"applied to the video"})
+            if result["errors"]:
+                job["log"].append({"kind": "fail", "lang": "",
+                                   "detail": f"✗ {len(result['errors'])} language(s) failed — "
+                                             f"the rest were applied"})
         log.info("Translation for stream %d applied %d/%d language(s)",
-                 stream_id, len(result["localizations"]), len(languages))
+                 stream_id, len(applied), len(languages))
     except Exception as e:
         log.warning("Translation for stream %d failed: %s", stream_id, e)
         with _TRANSLATION_JOBS_LOCK:
             job["running"] = False
             job["error"] = str(e)[:300]
-            job["log"].append({"kind": "fail", "lang": "", "detail": str(e)[:160]})
+            job["needs_auth"] = _is_auth_error(e)
+            job["log"].append({"kind": "fail", "lang": "",
+                               "detail": f"✗ failed — {str(e)[:140]}"})
 
 
 @app.route("/stream/translate/<int:stream_id>", methods=["POST"])
@@ -888,7 +923,8 @@ def stream_translate(stream_id):
         try:
             meta = translator_bridge.fetch_video_meta(video_id)
         except Exception as e:
-            return jsonify({"ok": False, "message": f"Cannot fetch video: {e}"}), 502
+            return jsonify({"ok": False, "message": f"Cannot fetch video: {e}",
+                            "needs_auth": _is_auth_error(e)}), 502
         title = meta.get("title", "")
         description = meta.get("description", "")
     try:
@@ -924,6 +960,23 @@ def translate_status(stream_id):
         job = _TRANSLATION_JOBS.get(stream_id)
         return jsonify(job or {"running": False, "done": 0, "total": 0,
                                "applied": 0, "error": "", "log": []})
+
+
+@app.route("/api/yt_lookup")
+@login_required
+@ajax_required
+def yt_lookup():
+    """Best-effort title/channel lookup for autofilling the create/edit form.
+    Returns {} quietly whenever the engine or the channel isn't available."""
+    video_id = _youtube_id(request.args.get("url", ""))
+    if not video_id or not translator_bridge.ready():
+        return jsonify({})
+    if translator_bridge.get_youtube_client() is None:
+        return jsonify({})
+    try:
+        return jsonify(translator_bridge.video_lookup(video_id))
+    except Exception:
+        return jsonify({})
 
 
 def _admin_guard():

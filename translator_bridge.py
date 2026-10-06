@@ -308,6 +308,22 @@ def fetch_video_meta(video_id):
     return meta
 
 
+def video_lookup(video_id):
+    """Lightweight snippet lookup (title / channel / description) for the
+    stream-name autofill. Works for live broadcasts and regular videos."""
+    eng = _load()
+    youtube = get_youtube_client()
+    if youtube is None:
+        raise RuntimeError("YouTube channel is not connected")
+    response = youtube.videos().list(part="snippet", id=video_id).execute()
+    if not response.get("items"):
+        raise ValueError("Video not found")
+    snippet = response["items"][0]["snippet"]
+    return {"title": snippet.get("title", ""),
+            "channel_title": snippet.get("channelTitle", ""),
+            "description": snippet.get("description", "")}
+
+
 def update_video_localizations(video_id, source_title, source_description,
                                source_language, localizations):
     """Write localized title/description back to the YouTube video."""

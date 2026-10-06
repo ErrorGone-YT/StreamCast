@@ -245,12 +245,16 @@ def init_db():
 
 # --- Streams ----------------------------------------------------------------
 def create_stream(name, channel_name="", rtmp_key="", youtube_url="", stream_type="video",
-                  quality_mode="balanced", owner_id=None):
+                  quality_mode="balanced", owner_id=None, translate_enabled=0,
+                  translate_parts="all", translate_source="video", translate_title="",
+                  translate_description="", translate_languages="[]"):
     with get_db() as db:
         cur = db.execute(
-            "INSERT INTO streams (name, channel_name, rtmp_key, youtube_url, stream_type, quality_mode, owner_id, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (name, channel_name, rtmp_key, youtube_url, stream_type, quality_mode, owner_id, time.time()),
+            "INSERT INTO streams (name, channel_name, rtmp_key, youtube_url, stream_type, quality_mode, owner_id, created_at, "
+            "translate_enabled, translate_parts, translate_source, translate_title, translate_description, translate_languages) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (name, channel_name, rtmp_key, youtube_url, stream_type, quality_mode, owner_id, time.time(),
+             translate_enabled, translate_parts, translate_source, translate_title, translate_description, translate_languages),
         )
         return cur.lastrowid
 

@@ -60,9 +60,7 @@
       <label for="channel_name">Channel name</label>
       <input type="text" id="channel_name" name="channel_name" value="{{ stream.channel_name if stream else '' }}" placeholder="e.g. Lofi Girl">
     </div>
-    {% if stream %}
     {% include '_translate_section.html' %}
-    {% endif %}
     {% if not stream %}
     <div class="field">
       <label>Stream type</label>
@@ -124,4 +122,33 @@
     <button type="submit" class="btn btn-primary">{{ 'Create stream' if not stream else 'Save changes' }}</button>
   </form>
 </div>
+
+<script>
+// Autofill: when a YouTube URL is entered, pull the video's title and channel
+// name and fill the empty fields (never overwrites what's already typed).
+(function () {
+  const ytUrl = document.getElementById('youtube_url');
+  if (!ytUrl) return;
+  let busy = false;
+  ytUrl.addEventListener('change', async () => {
+    const url = ytUrl.value.trim();
+    if (!url || busy) return;
+    busy = true;
+    try {
+      const r = await fetch('/api/yt_lookup?url=' + encodeURIComponent(url),
+                            {headers: {'X-Requested-With': 'XMLHttpRequest'}});
+      const d = await r.json();
+      const name = document.getElementById('name');
+      const ch = document.getElementById('channel_name');
+      const filled = [];
+      if (d && d.title && !name.value.trim()) { name.value = d.title; filled.push('stream name'); }
+      if (d && d.channel_title && !ch.value.trim()) { ch.value = d.channel_title; filled.push('channel name'); }
+      if (filled.length && window.showFlash) {
+        showFlash('Filled ' + filled.join(' & ') + ' from YouTube', 'ok');
+      }
+    } catch (e) { /* autofill is best-effort */ }
+    finally { busy = false; }
+  });
+})();
+</script>
 {% endblock %}

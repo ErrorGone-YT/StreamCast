@@ -69,11 +69,17 @@
   .tr-log .k-retry { color:#f0a020; }
 </style>
 
+{% set tr_enabled = stream and stream.translate_enabled %}
+{% set tr_source = (stream.translate_source or 'video') if stream else 'video' %}
+{% set tr_parts = (stream.translate_parts or 'all') if stream else 'all' %}
+{% set tr_title_val = stream.translate_title if stream else '' %}
+{% set tr_desc_val = stream.translate_description if stream else '' %}
+
 <div class="field" id="translateSection">
-  <div class="tr-card {{ 'tr-collapsed' if not stream.translate_enabled }}">
+  <div class="tr-card {{ 'tr-collapsed' if not tr_enabled }}">
     <div class="tr-head">
       <label class="switch" title="Enable metadata localization">
-        <input type="checkbox" id="translate_enabled" name="translate_enabled" {{ 'checked' if stream.translate_enabled }}>
+        <input type="checkbox" id="translate_enabled" name="translate_enabled" {{ 'checked' if tr_enabled }}>
         <span class="slider round"></span>
       </label>
       <div>
@@ -93,29 +99,31 @@
       <div class="tr-row">
         <span class="tr-label">Title &amp; description</span>
         <div class="tr-seg">
-          <label><input type="radio" name="translate_source" value="video" {{ 'checked' if (stream.translate_source or 'video') == 'video' }}>From video</label>
-          <label><input type="radio" name="translate_source" value="manual" {{ 'checked' if stream.translate_source == 'manual' }}>Enter manually</label>
+          <label><input type="radio" name="translate_source" value="video" {{ 'checked' if tr_source == 'video' }}>From video</label>
+          <label><input type="radio" name="translate_source" value="manual" {{ 'checked' if tr_source == 'manual' }}>Enter manually</label>
         </div>
         <div class="tr-fields-top">
           <span class="hint">What will be translated</span>
+          {% if stream %}
           <button type="button" class="btn" id="trRefresh" title="Pull the current title & description from YouTube">⟳ Fetch from YouTube</button>
+          {% endif %}
         </div>
         <div id="trTitleRow">
           <input type="text" class="tr-field" id="trTitle" name="translate_title"
-                 value="{{ stream.translate_title or '' }}" placeholder="Source title">
+                 value="{{ tr_title_val }}" placeholder="Source title">
         </div>
         <div id="trDescRow">
           <textarea class="tr-field" id="trDesc" name="translate_description"
-                    rows="5" placeholder="Source description">{{ stream.translate_description or '' }}</textarea>
+                    rows="5" placeholder="Source description">{{ tr_desc_val }}</textarea>
         </div>
       </div>
 
       <div class="tr-row">
         <span class="tr-label">What to localize</span>
         <div class="tr-seg">
-          <label><input type="radio" name="translate_parts" value="all" {{ 'checked' if (stream.translate_parts or 'all') == 'all' }}>Everything</label>
-          <label><input type="radio" name="translate_parts" value="title" {{ 'checked' if stream.translate_parts == 'title' }}>Titles only</label>
-          <label><input type="radio" name="translate_parts" value="description" {{ 'checked' if stream.translate_parts == 'description' }}>Descriptions only</label>
+          <label><input type="radio" name="translate_parts" value="all" {{ 'checked' if tr_parts == 'all' }}>Everything</label>
+          <label><input type="radio" name="translate_parts" value="title" {{ 'checked' if tr_parts == 'title' }}>Titles only</label>
+          <label><input type="radio" name="translate_parts" value="description" {{ 'checked' if tr_parts == 'description' }}>Descriptions only</label>
         </div>
       </div>
 
@@ -152,12 +160,16 @@
         </div>
       </div>
 
+      {% if stream %}
+      <div class="tr-log" id="trLog"></div>
       <div class="tr-actions">
         <button type="button" class="btn btn-primary" id="trRun">Translate now</button>
         <div class="tr-progress" id="trProgress" style="display:none;"><div></div></div>
         <span class="hint" id="trStatus" style="margin:0;"></span>
       </div>
-      <div class="tr-log" id="trLog"></div>
+      {% else %}
+      <p class="hint" style="margin:0;">💾 Pre-configure the languages here — after the stream is saved, the Translate button appears on this page.</p>
+      {% endif %}
       {% endif %}
     </div>
   </div>
@@ -166,12 +178,23 @@
 <script>
 try {
 (function () {
+  {% if stream %}
+  const PREVIEW_URL = {{ url_for('translate_preview', stream_id=stream.id)|tojson }};
+  const RUN_URL = {{ url_for('stream_translate', stream_id=stream.id)|tojson }};
+  const STATUS_URL = {{ url_for('translate_status', stream_id=stream.id)|tojson }};
+  {% else %}
+  const PREVIEW_URL = null, RUN_URL = null, STATUS_URL = null;
+  {% endif %}
+  const STREAM_ID = {{ stream.id if stream else 'null' }};
+  {% if stream %}
   const card = document.querySelector('#translateSection .tr-card');
   if (!card) return;
   const enable = document.getElementById('translate_enabled');
   enable.addEventListener('change', () => card.classList.toggle('tr-collapsed', !enable.checked));
-
-  const seg = (name) => document.querySelector(`input[name="${name}"]:checked`)?.value;
+  {% else %}
+  // Create page: pre-configure languages only — the card stays expanded.
+  document.querySelector('#translateSection .tr-card')?.classList.remove('tr-collapsed');
+  {% endif %}
   const titleInput = document.getElementById('trTitle');
   const descInput = document.getElementById('trDesc');
   const titleRow = document.getElementById('trTitleRow');
@@ -196,19 +219,29 @@ try {
     stack.appendChild(toast);
     setTimeout(() => toast.remove(), kind === 'error' ? 6000 : 3500);
   }
+  window.showFlash = window.showFlash || showFlash;  // shared with the form autofill
   function escapeHtml(s) {
     return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  }
+  function goToAuth() {
+    // YouTube answered 403 Forbidden — the channel isn't authorized yet.
+    if (confirm('This YouTube channel is not authorized yet.\n' +
+                'Open the authorization page (Admin → Translation) now?')) {
+      location.href = '/admin/translator/connect';
+    }
   }
 
   // --- source fields: from video (read-only) vs manual (editable) ----------
   async function fetchMeta(notify) {
+    if (!STREAM_ID) return false;
     try {
-      const r = await fetch({{ url_for('translate_preview', stream_id=stream.id)|tojson }},
+      const r = await fetch(PREVIEW_URL,
                             {headers: {'X-Requested-With': 'XMLHttpRequest'}});
       const text = await r.text();
       let d;
       try { d = JSON.parse(text); }
       catch (e) { throw new Error('HTTP ' + r.status + ': ' + text.slice(0, 120)); }
+      if (d.needs_auth) { goToAuth(); return false; }
       if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status);
       titleInput.value = d.title || '';
       descInput.value = d.description || '';
@@ -235,7 +268,7 @@ try {
   }
   document.querySelectorAll('input[name="translate_source"]').forEach(
     r => r.addEventListener('change', () => applyMode(false)));
-  document.getElementById('trRefresh').addEventListener('click', () => fetchMeta(true));
+  document.getElementById('trRefresh')?.addEventListener('click', () => fetchMeta(true));
 
   // --- what to localize: hide the part that won't be touched ----------------
   function applyParts() {
@@ -363,13 +396,13 @@ try {
 
   // --- run translation --------------------------------------------------------
   function renderLog(entries) {
-    logBox.innerHTML = entries.map(e => {
-      const cls = 'k-' + (e.kind || 'info');
-      return `<div class="${cls}">[${e.lang || '*'}] ${e.kind}: ${escapeHtml(e.detail)}</div>`;
-    }).join('');
+    // Entries already carry a full human line ("✓ en-US — English (US): …").
+    logBox.innerHTML = entries.map(e =>
+      `<div class="k-${e.kind || 'info'}">${escapeHtml(e.detail)}</div>`).join('');
     logBox.scrollTop = logBox.scrollHeight;
   }
 
+  if (document.getElementById('trRun')) {
   document.getElementById('trRun').addEventListener('click', async () => {
     const btn = document.getElementById('trRun');
     btn.disabled = true;
@@ -378,13 +411,15 @@ try {
       const form = btn.closest('form');
       const saveResp = await fetch(form.action, {method: 'POST', body: new FormData(form)});
       if (!saveResp.ok) throw new Error('save failed (HTTP ' + saveResp.status + ')');
-      const r = await fetch({{ url_for('stream_translate', stream_id=stream.id)|tojson }}, {
+      const r = await fetch(RUN_URL, {
         method: 'POST', headers: {'X-Requested-With': 'XMLHttpRequest'}
       });
-      const d = await r.json();
+      const d = await r.json().catch(() => ({}));
+      if (d.needs_auth) { btn.disabled = false; goToAuth(); return; }
       if (!r.ok || !d.ok) throw new Error(d.message || 'HTTP ' + r.status);
       progressBox.style.display = 'block';
       logBox.classList.add('open');
+      logBox.scrollIntoView({behavior: 'smooth', block: 'center'});
       statusEl.textContent = `0 / ${d.total}`;
       bar.style.width = '0%';
       poll();
@@ -393,12 +428,13 @@ try {
       btn.disabled = false;
     }
   });
+  }
 
   function poll() {
     if (polling) clearInterval(polling);
     polling = setInterval(async () => {
       try {
-        const r = await fetch({{ url_for('translate_status', stream_id=stream.id)|tojson }},
+        const r = await fetch(STATUS_URL,
                               {headers: {'X-Requested-With': 'XMLHttpRequest'}});
         const d = await r.json();
         bar.style.width = d.total ? Math.round(100 * d.done / d.total) + '%' : '0%';
@@ -408,6 +444,7 @@ try {
         if (!d.running) {
           clearInterval(polling); polling = null;
           document.getElementById('trRun').disabled = false;
+          if (d.needs_auth) { goToAuth(); return; }
           if (d.error) showFlash('Translation finished with errors: ' + d.error, 'error');
           else if (d.applied) showFlash(d.applied + ' language(s) applied to the video', 'ok');
         }
