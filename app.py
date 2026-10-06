@@ -1,6 +1,8 @@
 """StreamCast — single-owner 24/7 YouTube streaming panel."""
+import json
 import logging
 import psutil
+import threading
 from logging.handlers import RotatingFileHandler
 import re
 import secrets
@@ -22,6 +24,7 @@ from werkzeug.utils import secure_filename
 import config
 import db
 import storage
+import translator_bridge
 from encoder import ffprobe_info, terminate_job, worker as encoder_worker
 from streamer import manager
 
@@ -730,6 +733,9 @@ def stream_edit(stream_id):
         quality_mode = request.form.get("quality_mode", stream["quality_mode"] or "balanced")
         if quality_mode not in config.QUALITY_MODES:
             quality_mode = stream["quality_mode"] or "balanced"
+        languages = [l for l in request.form.getlist("translate_languages") if l]
+        parts = request.form.get("translate_parts", "all")
+        source = request.form.get("translate_source", "video")
         db.update_stream(
             stream_id,
             name=request.form.get("name", "").strip() or stream["name"],
@@ -738,6 +744,12 @@ def stream_edit(stream_id):
             youtube_url=request.form.get("youtube_url", "").strip(),
             loop_queue=1 if request.form.get("loop_queue") else 0,
             quality_mode=quality_mode,
+            translate_enabled=1 if request.form.get("translate_enabled") else 0,
+            translate_parts=parts if parts in ("all", "title", "description") else "all",
+            translate_source=source if source in ("video", "manual") else "video",
+            translate_title=request.form.get("translate_title", "").strip(),
+            translate_description=request.form.get("translate_description", "").strip(),
+            translate_languages=json.dumps(languages),
         )
         if quality_mode != (stream["quality_mode"] or "balanced"):
             # Re-encode the queue into the new mode in the background; files
@@ -757,7 +769,383 @@ def stream_edit(stream_id):
     return render_template(
         "stream_edit.html", stream=stream,
         current_mode=stream["quality_mode"] or "balanced",
+        **_translate_page_data(stream),
     )
+
+
+# --- Metadata localization (vendored youtube-metadata-translator) -----------
+
+def _translate_page_data(stream):
+    """Template context for the localization section of the edit page."""
+    languages = []
+    try:
+        languages = json.loads(stream["translate_languages"] or "[]")
+    except ValueError:
+        pass
+    data = {
+        "tr_ready": translator_bridge.ready(),
+        "tr_error": translator_bridge.load_error,
+        "tr_channel": None,
+        "tr_catalog": {},
+        "tr_presets": {},
+        "tr_languages": languages,
+    }
+    if data["tr_ready"]:
+        status = translator_bridge.status()
+        data["tr_channel"] = status["channel"]
+        data["tr_catalog"] = translator_bridge.language_catalog()
+        data["tr_presets"] = translator_bridge.language_presets()
+    return data
+
+
+def _translation_video_id(stream):
+    return _youtube_id(stream["youtube_url"] or "")
+
+
+@app.route("/stream/translate_preview/<int:stream_id>")
+@login_required
+@ajax_required
+def translate_preview(stream_id):
+    """Current source title/description the translation would start from."""
+    stream = db.get_stream(stream_id)
+    if not stream:
+        abort(404)
+    _owned_stream(stream)
+    if (stream["translate_source"] or "video") == "manual":
+        return jsonify({"source": "manual",
+                        "title": stream["translate_title"] or "",
+                        "description": stream["translate_description"] or ""})
+    video_id = _translation_video_id(stream)
+    if not video_id:
+        return jsonify({"error": "No YouTube URL on this stream"}), 400
+    try:
+        meta = translator_bridge.fetch_video_meta(video_id)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+    return jsonify({"source": "video", "video_id": video_id,
+                    "title": meta.get("title", ""),
+                    "description": meta.get("description", "")})
+
+
+_TRANSLATION_JOBS = {}          # stream_id -> job dict
+_TRANSLATION_JOBS_LOCK = threading.Lock()
+
+
+def _translation_worker(stream_id, video_id, title, description, languages, parts):
+    job = _TRANSLATION_JOBS[stream_id]
+    log = logging.getLogger("streamcast")
+    try:
+        def progress(kind, lang, detail=""):
+            with _TRANSLATION_JOBS_LOCK:
+                if kind == "ok":
+                    job["done"] += 1
+                job["log"].append({"kind": kind, "lang": lang, "detail": str(detail)[:160]})
+                job["log"] = job["log"][-200:]
+        result = translator_bridge.run_translation(
+            title, description, languages, parts, progress=progress)
+        if result["localizations"]:
+            translator_bridge.update_video_localizations(
+                video_id, title, description, "en", result["localizations"])
+        with _TRANSLATION_JOBS_LOCK:
+            job["done"] = len(result["localizations"])
+            job["running"] = False
+            job["error"] = "; ".join(result["errors"]) if result["errors"] else ""
+            job["applied"] = len(result["localizations"])
+            job["log"].append({"kind": "info", "lang": "",
+                               "detail": f"Applied {len(result['localizations'])} "
+                                         f"localization(s) to {video_id}"})
+        log.info("Translation for stream %d applied %d/%d language(s)",
+                 stream_id, len(result["localizations"]), len(languages))
+    except Exception as e:
+        log.warning("Translation for stream %d failed: %s", stream_id, e)
+        with _TRANSLATION_JOBS_LOCK:
+            job["running"] = False
+            job["error"] = str(e)[:300]
+            job["log"].append({"kind": "fail", "lang": "", "detail": str(e)[:160]})
+
+
+@app.route("/stream/translate/<int:stream_id>", methods=["POST"])
+@login_required
+@ajax_required
+def stream_translate(stream_id):
+    _owned_stream(stream_id)
+    stream = db.get_stream(stream_id)
+    if not stream:
+        abort(404)
+    if not translator_bridge.ready():
+        return jsonify({"ok": False, "message": translator_bridge.load_error}), 400
+    video_id = _translation_video_id(stream)
+    if not video_id:
+        return jsonify({"ok": False, "message": "No YouTube URL on this stream"}), 400
+    if (stream["translate_source"] or "video") == "manual":
+        title = (stream["translate_title"] or "").strip()
+        description = (stream["translate_description"] or "").strip()
+        if not title:
+            return jsonify({"ok": False, "message": "Manual source title is empty"}), 400
+    else:
+        try:
+            meta = translator_bridge.fetch_video_meta(video_id)
+        except Exception as e:
+            return jsonify({"ok": False, "message": f"Cannot fetch video: {e}"}), 502
+        title = meta.get("title", "")
+        description = meta.get("description", "")
+    try:
+        languages = json.loads(stream["translate_languages"] or "[]")
+    except ValueError:
+        languages = []
+    if not languages:
+        return jsonify({"ok": False, "message": "No target languages selected"}), 400
+
+    with _TRANSLATION_JOBS_LOCK:
+        old = _TRANSLATION_JOBS.get(stream_id)
+        if old and old["running"]:
+            return jsonify({"ok": False, "message": "A translation is already running"}), 409
+        _TRANSLATION_JOBS[stream_id] = {
+            "running": True, "done": 0, "total": len(languages),
+            "applied": 0, "error": "", "started": time.time(),
+            "video_id": video_id, "log": [],
+        }
+        job = _TRANSLATION_JOBS[stream_id]
+    parts = stream["translate_parts"] or "all"
+    threading.Thread(target=_translation_worker,
+                     args=(stream_id, video_id, title, description, languages, parts),
+                     daemon=True).start()
+    return jsonify({"ok": True, "total": len(languages)})
+
+
+@app.route("/api/translate_status/<int:stream_id>")
+@login_required
+@ajax_required
+def translate_status(stream_id):
+    _owned_stream(stream_id)
+    with _TRANSLATION_JOBS_LOCK:
+        job = _TRANSLATION_JOBS.get(stream_id)
+        return jsonify(job or {"running": False, "done": 0, "total": 0,
+                               "applied": 0, "error": "", "log": []})
+
+
+def _admin_guard():
+    if current_role() != "admin":
+        abort(403)
+
+
+@app.route("/admin/translator/secrets", methods=["POST"])
+@login_required
+def admin_translator_secrets():
+    _admin_guard()
+    file = request.files.get("secrets")
+    if not file or not file.filename:
+        flash("Choose a client_secrets file first", "error")
+        return redirect(url_for("admin_panel"))
+    try:
+        translator_bridge.save_secrets(file.read())
+        flash("OAuth client secrets saved", "ok")
+    except Exception as e:
+        flash(f"Rejected: {e}", "error")
+    return redirect(url_for("admin_panel") + "#translator")
+
+
+@app.route("/admin/translator/connect")
+@login_required
+def admin_translator_connect():
+    """Start the Google OAuth flow with a redirect back to this site."""
+    _admin_guard()
+    if not translator_bridge.ready():
+        flash(translator_bridge.load_error or "Translator engine unavailable", "error")
+        return redirect(url_for("admin_panel"))
+    if not translator_bridge.has_secrets():
+        flash("Upload the OAuth client secrets JSON first", "error")
+        return redirect(url_for("admin_panel") + "#translator")
+    try:
+        from google_auth_oauthlib.flow import Flow
+    except ImportError:
+        flash("google-auth-oauthlib is not installed (see requirements.txt)", "error")
+        return redirect(url_for("admin_panel"))
+    eng = translator_bridge.engine
+    with open(translator_bridge.os.path.join(
+            translator_bridge.data_dir(), "client_secrets.json"), encoding="utf-8") as f:
+        client_config = json.load(f)
+    redirect_uri = (config.SITE_URL or request.url_root.rstrip("/")) + "/oauth2callback"
+    flow = Flow.from_client_config(client_config, scopes=eng.SCOPES,
+                                   redirect_uri=redirect_uri)
+    auth_url, state = flow.authorization_url(
+        access_type="offline", include_granted_scopes="false", prompt="consent")
+    session["oauth_state"] = state
+    return redirect(auth_url)
+
+
+@app.route("/oauth2callback")
+@login_required
+def oauth2callback():
+    _admin_guard()
+    eng = translator_bridge.engine
+    if eng is None:
+        abort(404)
+    if request.args.get("error"):
+        flash(f"Google returned: {request.args['error']}", "error")
+        return redirect(url_for("admin_panel") + "#translator")
+    if request.args.get("code") is None or "oauth_state" not in session:
+        abort(400)
+    try:
+        from google_auth_oauthlib.flow import Flow
+        import googleapiclient.discovery
+        import pickle
+        redirect_uri = (config.SITE_URL or request.url_root.rstrip("/")) + "/oauth2callback"
+        with open(translator_bridge.os.path.join(
+                translator_bridge.data_dir(), "client_secrets.json"), encoding="utf-8") as f:
+            client_config = json.load(f)
+        flow = Flow.from_client_config(client_config, scopes=eng.SCOPES,
+                                       redirect_uri=redirect_uri, state=session["oauth_state"])
+        flow.fetch_token(authorization_response=request.url)
+        credentials = flow.credentials
+        token_file = "oauth_token.pickle"
+        with open(translator_bridge.os.path.join(
+                translator_bridge.data_dir(), token_file), "wb") as f:
+            pickle.dump(credentials, f)
+        profiles = eng.load_channel_profiles()
+        profile = next((p for p in profiles["profiles"]), None)
+        if profile is None:
+            profile = {"id": "channel", "name": "Channel", "playlists": [],
+                       "default_playlists": []}
+            profiles["profiles"].append(profile)
+        profile.update({"token_file": token_file,
+                        "client_secrets_file": "client_secrets.json"})
+        youtube = googleapiclient.discovery.build("youtube", "v3", credentials=credentials)
+        eng.refresh_profile_identity(youtube, profile, profiles)
+        flash(f"YouTube channel connected: {profile.get('channel_title', '')}", "ok")
+    except Exception as e:
+        logging.getLogger("streamcast").warning("OAuth connect failed: %s", e)
+        flash(f"YouTube connect failed: {str(e)[:200]}", "error")
+    session.pop("oauth_state", None)
+    return redirect(url_for("admin_panel") + "#translator")
+
+
+def _translator_api(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        _admin_guard()
+        if not translator_bridge.ready():
+            return jsonify({"ok": False, "message": translator_bridge.load_error}), 400
+        return view(*args, **kwargs)
+    return wrapped
+
+
+@app.route("/api/translator/settings")
+@login_required
+@ajax_required
+def translator_settings():
+    _admin_guard()
+    vendored = translator_bridge.vendored_version()
+    return jsonify({
+        "ok": True,
+        "status": translator_bridge.status(),
+        "has_secrets": translator_bridge.has_secrets(),
+        "registry": translator_bridge.provider_registry_view(),
+        "parallel": translator_bridge.parallelism(),
+        "vendored": vendored,
+    })
+
+
+@app.route("/api/translator/provider/save", methods=["POST"])
+@login_required
+@ajax_required
+@_translator_api
+def translator_provider_save():
+    data = request.get_json() or {}
+    entry = data.get("entry") or {}
+    if not entry.get("name"):
+        return jsonify({"ok": False, "message": "Provider name is required"}), 400
+    import hashlib
+    reg = translator_bridge.provider_registry()
+    keep = set(data.get("keep", []))
+    new_keys = [k for k in re.split(r"[,\s]+", str(data.get("new_keys", ""))) if k]
+    clean = {k: v for k, v in entry.items()
+             if k in ("id", "name", "kind", "base_url", "model", "auth")}
+    existing = next((p for p in reg["providers"] if p["id"] == clean.get("id")), None)
+    if existing:
+        if existing.get("auth"):
+            merged = [k for k in existing.get("api_keys", [])
+                      if hashlib.sha1(k.encode()).hexdigest()[:10] in keep] + new_keys
+        else:
+            merged = []
+        existing.update(clean)
+        existing["api_keys"] = merged
+    else:
+        eng = translator_bridge.engine
+        clean["id"] = eng.profile_slug(clean["name"], {p["id"] for p in reg["providers"]})
+        clean["api_keys"] = new_keys
+        reg["providers"].append(clean)
+        reg.setdefault("active", clean["id"])
+    translator_bridge.save_provider_registry(reg)
+    return jsonify({"ok": True, "registry": translator_bridge.provider_registry_view()})
+
+
+@app.route("/api/translator/provider/activate", methods=["POST"])
+@login_required
+@ajax_required
+@_translator_api
+def translator_provider_activate():
+    data = request.get_json() or {}
+    reg = translator_bridge.provider_registry()
+    if data.get("id") not in {p["id"] for p in reg["providers"]}:
+        return jsonify({"ok": False, "message": "Unknown provider"}), 400
+    reg["active"] = data["id"]
+    translator_bridge.save_provider_registry(reg)
+    return jsonify({"ok": True, "registry": translator_bridge.provider_registry_view()})
+
+
+@app.route("/api/translator/provider/delete", methods=["POST"])
+@login_required
+@ajax_required
+@_translator_api
+def translator_provider_delete():
+    data = request.get_json() or {}
+    reg = translator_bridge.provider_registry()
+    reg["providers"] = [p for p in reg["providers"] if p["id"] != data.get("id")]
+    if reg.get("active") not in {p["id"] for p in reg["providers"]}:
+        reg["active"] = reg["providers"][0]["id"] if reg["providers"] else None
+    translator_bridge.save_provider_registry(reg)
+    return jsonify({"ok": True, "registry": translator_bridge.provider_registry_view()})
+
+
+@app.route("/api/translator/provider/check_keys", methods=["POST"])
+@login_required
+@ajax_required
+@_translator_api
+def translator_provider_check_keys():
+    provider_id = (request.get_json() or {}).get("provider_id")
+    try:
+        keys = translator_bridge.check_provider_keys(provider_id)
+    except ValueError as e:
+        return jsonify({"ok": False, "message": str(e)}), 400
+    return jsonify({"ok": True, "keys": keys})
+
+
+@app.route("/api/translator/parallel", methods=["POST"])
+@login_required
+@ajax_required
+@_translator_api
+def translator_parallel():
+    value = (request.get_json() or {}).get("value", "auto")
+    try:
+        saved = translator_bridge.set_parallelism(value)
+    except ValueError:
+        return jsonify({"ok": False, "message": "Invalid value"}), 400
+    return jsonify({"ok": True, "parallel": translator_bridge.parallelism(),
+                    "saved": saved})
+
+
+@app.route("/admin/translator/update", methods=["POST"])
+@login_required
+def admin_translator_update():
+    _admin_guard()
+    try:
+        info = translator_bridge.update_vendor()
+        flash(f"Translator engine updated to {info['sha']}", "ok")
+    except Exception as e:
+        logging.getLogger("streamcast").warning("Vendor update failed: %s", e)
+        flash(f"Update failed: {str(e)[:200]}", "error")
+    return redirect(url_for("admin_panel") + "#translator")
 
 
 @app.route("/stream/delete/<int:stream_id>", methods=["POST"])

@@ -60,6 +60,11 @@ TRUST_PROXY = _env("STREAMCAST_TRUST_PROXY", "1") == "1"
 HOST = _env("STREAMCAST_HOST", "127.0.0.1")
 PORT = int(_env("STREAMCAST_PORT", "5000"))
 
+# Public base URL of this instance (no trailing slash). Used as the OAuth
+# redirect base: <SITE_URL>/oauth2callback must be registered in the Google
+# Cloud console. Empty = derived from the incoming request.
+SITE_URL = _env("STREAMCAST_SITE_URL", "").rstrip("/")
+
 # --- Streaming --------------------------------------------------------------
 # Default YouTube ingest endpoint. Users only paste their stream KEY in the UI.
 RTMP_BASE = _env("STREAMCAST_RTMP_BASE", "rtmp://a.rtmp.youtube.com/live2")

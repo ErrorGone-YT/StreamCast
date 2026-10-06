@@ -1,0 +1,322 @@
+{# Metadata localization section (edit page, existing streams only).
+   Context: stream, tr_ready, tr_error, tr_channel, tr_catalog, tr_presets, tr_languages #}
+<style>
+  .tr-card { border:1px solid var(--border-strong); border-radius:12px; padding:16px; background:var(--surface-2); }
+  .tr-head { display:flex; align-items:center; gap:12px; }
+  .tr-head .tr-title { font-weight:700; }
+  .tr-head .hint { margin:0; }
+  .tr-body { margin-top:14px; display:flex; flex-direction:column; gap:16px; }
+  .tr-collapsed .tr-body { display:none; }
+  .tr-row { display:flex; flex-direction:column; gap:8px; }
+  .tr-label { font-size:12px; font-weight:700; letter-spacing:.06em; color:var(--muted); text-transform:uppercase; }
+  .tr-seg { display:flex; gap:8px; flex-wrap:wrap; }
+  .tr-seg label {
+    border:1px solid var(--border-strong); border-radius:999px;
+    padding:7px 14px; font-size:13px; font-weight:600; cursor:pointer;
+    color:var(--text-2);
+  }
+  .tr-seg label:has(input:checked) {
+    border-color: var(--accent, #6d87ff); color: var(--accent, #6d87ff);
+    background: rgba(109,135,255,.10);
+    box-shadow: 0 0 0 1px var(--accent, #6d87ff) inset;
+  }
+  .tr-seg input { position:absolute; opacity:0; pointer-events:none; }
+  .tr-preview {
+    border:1px solid var(--border); border-radius:10px; padding:12px 14px;
+    background:var(--surface); display:flex; flex-direction:column; gap:8px;
+  }
+  .tr-preview-top { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); }
+  .tr-preview .badge {
+    display:inline-flex; align-items:center; gap:4px;
+    background:rgba(240,48,74,.12); color:#ff6b81;
+    font-size:11px; font-weight:700; border-radius:6px; padding:2px 8px;
+  }
+  .tr-preview-title { font-weight:700; font-size:14px; overflow-wrap:anywhere; }
+  .tr-preview-desc { font-size:12.5px; color:var(--text-2); white-space:pre-wrap; overflow-wrap:anywhere;
+                     max-height:80px; overflow:hidden; transition:max-height .2s; }
+  .tr-preview-desc.open { max-height:400px; overflow-y:auto; }
+  .tr-desc-toggle { background:none; border:none; color:var(--accent); font:inherit; font-size:12px;
+                    cursor:pointer; padding:0; text-align:left; }
+  .tr-chips { display:flex; gap:8px; flex-wrap:wrap; }
+  .tr-chip {
+    display:inline-flex; align-items:center; gap:6px;
+    border:1px solid var(--border-strong); border-radius:999px;
+    padding:4px 10px; font-size:12.5px; font-weight:600; background:var(--surface);
+  }
+  .tr-chip button { background:none; border:none; color:var(--muted); cursor:pointer;
+                    font:inherit; padding:0 0 0 2px; line-height:1; }
+  .tr-chip button:hover { color:#d9534f; }
+  .tr-langs-toggle { display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none;
+                     font-size:13px; font-weight:600; color:var(--text-2); }
+  .tr-langs-wrap { display:none; }
+  .tr-langs-wrap.open { display:block; }
+  .tr-langs {
+    display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:4px 12px;
+    border:1px solid var(--border); border-radius:10px; padding:10px 14px;
+    background:var(--surface); max-height:260px; overflow-y:auto;
+  }
+  .tr-langs label { display:flex; align-items:center; gap:7px; font-size:13px; cursor:pointer;
+                    padding:2px 0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  .tr-langs input { accent-color: var(--accent, #6d87ff); flex:none; }
+  .tr-actions { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  .tr-progress { flex:1; min-width:160px; height:6px; background:var(--border); border-radius:3px; overflow:hidden; }
+  .tr-progress > div { height:100%; width:0%; background:var(--accent, #6d87ff); transition:width .3s; }
+  .tr-log {
+    display:none; background:var(--surface); border:1px solid var(--border); border-radius:10px;
+    font-family:var(--mono, monospace); font-size:11.5px; padding:10px 12px;
+    max-height:180px; overflow-y:auto; white-space:pre-wrap; overflow-wrap:anywhere;
+  }
+  .tr-log.open { display:block; }
+  .tr-log .k-ok { color:#34c759; }
+  .tr-log .k-fail { color:#ff6b81; }
+  .tr-log .k-retry { color:#f0a020; }
+  .tr-manual { display:none; flex-direction:column; gap:8px; }
+  .tr-manual.open { display:flex; }
+</style>
+
+<div class="field" id="translateSection">
+  <div class="tr-card {{ 'tr-collapsed' if not stream.translate_enabled }}">
+    <div class="tr-head">
+      <span class="switch">
+        <input type="checkbox" id="translate_enabled" name="translate_enabled" {{ 'checked' if stream.translate_enabled }}>
+        <span class="slider round"></span>
+      </span>
+      <div>
+        <div class="tr-title">Metadata localization</div>
+        <p class="hint">Translate this stream's title &amp; description into multiple languages and apply them to the YouTube video.</p>
+      </div>
+    </div>
+
+    <div class="tr-body">
+      {% if not tr_ready %}
+      <p class="hint" style="color:#d9534f; margin:0;">Translator engine unavailable: {{ tr_error }}</p>
+      {% else %}
+      {% if not tr_channel %}
+      <p class="hint" style="color:#f0a020; margin:0;">⚠️ No YouTube channel connected — connect one in Admin → Translation (OAuth), then reload this page.</p>
+      {% endif %}
+
+      <div class="tr-row">
+        <span class="tr-label">Title &amp; description</span>
+        <div class="tr-seg">
+          <label><input type="radio" name="translate_source" value="video" {{ 'checked' if (stream.translate_source or 'video') == 'video' }}>From video</label>
+          <label><input type="radio" name="translate_source" value="manual" {{ 'checked' if stream.translate_source == 'manual' }}>Enter manually</label>
+        </div>
+        <div id="trPreview" class="tr-preview" style="display:none;">
+          <div class="tr-preview-top">
+            <span class="badge">▶ {{ tr_channel.title if tr_channel else 'YouTube' }}</span>
+            <span>WHAT WILL BE TRANSLATED</span>
+            <span class="spacer" style="flex:1"></span>
+            <button type="button" id="trRefresh" title="Reload from YouTube" style="background:none;border:none;cursor:pointer;">⟳</button>
+          </div>
+          <div class="tr-preview-title" id="trPrevTitle">—</div>
+          <div class="tr-preview-desc" id="trPrevDesc"></div>
+          <button type="button" class="tr-desc-toggle" id="trDescToggle">Show description</button>
+        </div>
+        <div class="tr-manual" id="trManual">
+          <input type="text" name="translate_title" value="{{ stream.translate_title or '' }}" placeholder="Source title">
+          <textarea name="translate_description" rows="5" placeholder="Source description">{{ stream.translate_description or '' }}</textarea>
+        </div>
+      </div>
+
+      <div class="tr-row">
+        <span class="tr-label">What to localize</span>
+        <div class="tr-seg">
+          <label><input type="radio" name="translate_parts" value="all" {{ 'checked' if (stream.translate_parts or 'all') == 'all' }}>Everything</label>
+          <label><input type="radio" name="translate_parts" value="title" {{ 'checked' if stream.translate_parts == 'title' }}>Titles only</label>
+          <label><input type="radio" name="translate_parts" value="description" {{ 'checked' if stream.translate_parts == 'description' }}>Descriptions only</label>
+        </div>
+      </div>
+
+      <div class="tr-row">
+        <span class="tr-label">Languages</span>
+        {% if tr_presets %}
+        <select id="trPreset" style="max-width:260px;">
+          <option value="">Load a preset…</option>
+          {% for name in tr_presets %}
+          <option value="{{ name }}">{{ name }} ({{ tr_presets[name]|length }})</option>
+          {% endfor %}
+        </select>
+        {% endif %}
+        <div class="tr-chips" id="trChips"></div>
+        <label class="tr-langs-toggle">
+          <span class="switch">
+            <input type="checkbox" id="trLangsToggle">
+            <span class="slider round"></span>
+          </span>
+          Show full language list ({{ tr_catalog|length }})
+        </label>
+        <div class="tr-langs-wrap" id="trLangsWrap">
+          <div class="tr-langs" id="trLangs">
+            {% for code, name in tr_catalog.items()|sort(attribute='1') %}
+            <label><input type="checkbox" name="translate_languages" value="{{ code }}"
+                          {{ 'checked' if code in tr_languages }}> {{ name }}</label>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      <div class="tr-actions">
+        <button type="button" class="btn btn-primary" id="trRun">Translate now</button>
+        <div class="tr-progress" id="trProgress" style="display:none;"><div></div></div>
+        <span class="hint" id="trStatus" style="margin:0;"></span>
+      </div>
+      <div class="tr-log" id="trLog"></div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const card = document.getElementById('translateSection').querySelector('.tr-card');
+  if (!card) return;
+  const enable = document.getElementById('translate_enabled');
+  enable.addEventListener('change', () => card.classList.toggle('tr-collapsed', !enable.checked));
+
+  const seg = (name) => document.querySelector(`input[name="${name}"]:checked`);
+  const preview = document.getElementById('trPreview');
+  const manual = document.getElementById('trManual');
+  const prevTitle = document.getElementById('trPrevTitle');
+  const prevDesc = document.getElementById('trPrevDesc');
+  const descToggle = document.getElementById('trDescToggle');
+  const statusEl = document.getElementById('trStatus');
+  const bar = document.querySelector('#trProgress > div');
+  const progressBox = document.getElementById('trProgress');
+  const logBox = document.getElementById('trLog');
+  const streamId = {{ stream.id }};
+  let polling = null;
+
+  async function loadPreview() {
+    if (seg('translate_source') === 'video') {
+      preview.style.display = 'flex'; manual.classList.remove('open');
+      prevTitle.textContent = 'Loading…'; prevDesc.textContent = '';
+      try {
+        const r = await fetch({{ url_for('translate_preview', stream_id=stream.id)|tojson }}, {headers: {'X-Requested-With': 'XMLHttpRequest'}});
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || r.status);
+        prevTitle.textContent = d.title || '(empty)';
+        prevDesc.textContent = d.description || '';
+      } catch (e) {
+        prevTitle.textContent = 'Failed to load: ' + e.message;
+        prevDesc.textContent = '';
+      }
+    } else {
+      preview.style.display = 'none'; manual.classList.add('open');
+    }
+  }
+  document.querySelectorAll('input[name="translate_source"]').forEach(r => r.addEventListener('change', loadPreview));
+  document.getElementById('trRefresh')?.addEventListener('click', loadPreview);
+  descToggle.addEventListener('click', () => {
+    const open = prevDesc.classList.toggle('open');
+    descToggle.textContent = open ? 'Hide description' : 'Show description';
+  });
+  if (seg('translate_source') === 'video') loadPreview(); else manual.classList.add('open');
+
+  // --- language chips -----------------------------------------------------
+  const chips = document.getElementById('trChips');
+  const langBoxes = [...document.querySelectorAll('#trLangs input')];
+  const byCode = Object.fromEntries(langBoxes.map(b => [b.value, b.closest('label').textContent.trim()]));
+  function renderChips() {
+    chips.innerHTML = '';
+    langBoxes.filter(b => b.checked).forEach(b => {
+      const chip = document.createElement('span');
+      chip.className = 'tr-chip';
+      chip.append(byCode[b.value]);
+      const x = document.createElement('button');
+      x.type = 'button'; x.textContent = '✕'; x.title = 'Remove';
+      x.onclick = () => { b.checked = false; renderChips(); };
+      chip.append(x);
+      chips.append(chip);
+    });
+    if (!langBoxes.some(b => b.checked)) {
+      chips.innerHTML = '<span class="hint">No languages selected yet — open the list below.</span>';
+    }
+  }
+  langBoxes.forEach(b => b.addEventListener('change', renderChips));
+  renderChips();
+
+  const preset = document.getElementById('trPreset');
+  const PRESETS = {{ tr_presets|tojson }};
+  preset?.addEventListener('change', () => {
+    const codes = PRESETS[preset.value] || [];
+    if (!preset.value) return;
+    langBoxes.forEach(b => { b.checked = codes.includes(b.value); });
+    renderChips();
+  });
+
+  const langsToggle = document.getElementById('trLangsToggle');
+  langsToggle.addEventListener('change', () =>
+    document.getElementById('trLangsWrap').classList.toggle('open', langsToggle.checked));
+
+  // --- run translation ------------------------------------------------------
+  function renderLog(entries) {
+    logBox.innerHTML = entries.map(e => {
+      const cls = 'k-' + (e.kind || 'info');
+      return `<div class="${cls}">[${e.lang || '*'}] ${e.kind}: ${escapeHtml(e.detail)}</div>`;
+    }).join('');
+    logBox.scrollTop = logBox.scrollHeight;
+  }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  }
+  function showFlash(message, kind) {  // dashboard defines one; edit page needs its own
+    let stack = document.querySelector('.toast-stack');
+    if (!stack) {
+      stack = document.createElement('div');
+      stack.className = 'toast-stack';
+      document.body.appendChild(stack);
+    }
+    const toast = document.createElement('div');
+    toast.className = 'toast toast-' + (kind || 'info');
+    toast.textContent = message;
+    toast.onclick = () => toast.remove();
+    stack.appendChild(toast);
+    setTimeout(() => toast.remove(), kind === 'error' ? 6000 : 3500);
+  }
+
+  document.getElementById('trRun').addEventListener('click', async () => {
+    const btn = document.getElementById('trRun');
+    btn.disabled = true;
+    try {
+      // Save the form first so the job uses exactly what is on screen.
+      const form = btn.closest('form');
+      const saveResp = await fetch(form.action, {method: 'POST', body: new FormData(form)});
+      if (!saveResp.ok) throw new Error('save failed (HTTP ' + saveResp.status + ')');
+      const r = await fetch({{ url_for('stream_translate', stream_id=stream.id)|tojson }}, {
+        method: 'POST', headers: {'X-Requested-With': 'XMLHttpRequest'}
+      });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.message || 'HTTP ' + r.status);
+      progressBox.style.display = 'block';
+      logBox.classList.add('open');
+      statusEl.textContent = `0 / ${d.total}`;
+      bar.style.width = '0%';
+      poll();
+    } catch (e) {
+      showFlash('Translation: ' + e.message, 'error');
+      btn.disabled = false;
+    }
+  });
+
+  function poll() {
+    if (polling) clearInterval(polling);
+    polling = setInterval(async () => {
+      try {
+        const r = await fetch({{ url_for('translate_status', stream_id=stream.id)|tojson }},
+                              {headers: {'X-Requested-With': 'XMLHttpRequest'}});
+        const d = await r.json();
+        bar.style.width = d.total ? Math.round(100 * d.done / d.total) + '%' : '0%';
+        statusEl.textContent = d.running ? `${d.done} / ${d.total} translating…`
+                                         : (d.error ? 'failed' : `${d.applied} applied`);
+        if (d.log && d.log.length) renderLog(d.log);
+        if (!d.running) {
+          clearInterval(polling); polling = null;
+          document.getElementById('trRun').disabled = false;
+          if (d.error) showFlash('Translation finished with errors: ' + d.error, 'error');
+          else if (d.applied) showFlash(d.applied + ' language(s) applied to the video', 'ok');
+        }
+      } catch (e) { /* transient */ }
+    }, 1500);
+  }
+})();
+</script>

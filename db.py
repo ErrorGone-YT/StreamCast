@@ -32,7 +32,13 @@ CREATE TABLE IF NOT EXISTS streams (
     stream_volume REAL DEFAULT 1.0,       -- video: playback audio level (0..2)
     quality_mode  TEXT DEFAULT 'balanced', -- 'quality' | 'balanced' | 'performance'
     last_error    TEXT DEFAULT '',          -- why the last session ended (survives restarts)
-    channel_name TEXT DEFAULT ''
+    channel_name TEXT DEFAULT '',
+    translate_enabled  INTEGER DEFAULT 0,     -- show/allow metadata localization for this stream
+    translate_parts    TEXT DEFAULT 'all',    -- 'all' | 'title' | 'description'
+    translate_source   TEXT DEFAULT 'video',  -- 'video' (take from YouTube) | 'manual'
+    translate_title    TEXT DEFAULT '',       -- manual source title
+    translate_description TEXT DEFAULT '',    -- manual source description
+    translate_languages TEXT DEFAULT '[]'     -- JSON array of target language codes
 );
 
 CREATE TABLE IF NOT EXISTS videos (
@@ -208,6 +214,18 @@ def migrate_db():
             db.execute("ALTER TABLE streams ADD COLUMN last_seen REAL")
         except sqlite3.OperationalError:
             pass
+        for col, ddl in (
+            ("translate_enabled", "INTEGER DEFAULT 0"),
+            ("translate_parts", "TEXT DEFAULT 'all'"),
+            ("translate_source", "TEXT DEFAULT 'video'"),
+            ("translate_title", "TEXT DEFAULT ''"),
+            ("translate_description", "TEXT DEFAULT ''"),
+            ("translate_languages", "TEXT DEFAULT '[]'"),
+        ):
+            try:
+                db.execute(f"ALTER TABLE streams ADD COLUMN {col} {ddl}")
+            except sqlite3.OperationalError:
+                pass
 
 def init_db():
     config.ensure_dirs()

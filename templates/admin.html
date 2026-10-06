@@ -154,9 +154,11 @@
     {% endfor %}
   </div>
   {% else %}
-  <div class="empty" style="padding:24px">No extra accounts yet — generate one above.</div>
+  <div class="empty" style="padding:24px">No extra storages yet — the main one handles everything.</div>
   {% endif %}
 </div>
+
+{% include '_admin_translation.html' %}
 
 <script>
 async function scanDisks() {

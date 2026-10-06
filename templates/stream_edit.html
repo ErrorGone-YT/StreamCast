@@ -60,6 +60,9 @@
       <label for="channel_name">Channel name</label>
       <input type="text" id="channel_name" name="channel_name" value="{{ stream.channel_name if stream else '' }}" placeholder="e.g. Lofi Girl">
     </div>
+    {% if stream %}
+    {% include '_translate_section.html' %}
+    {% endif %}
     {% if not stream %}
     <div class="field">
       <label>Stream type</label>
