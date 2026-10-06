@@ -13,6 +13,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 
 import config
@@ -26,6 +27,54 @@ DATA_DIRNAME = "yt_translator_data"
 
 engine = None
 load_error = None
+
+# Keys that answered HTTP 402 (limit exhausted) during translations, per
+# provider. Frozen in memory only: a restart (or topped-up balance check)
+# re-enables them.
+_FROZEN_KEYS = {}
+_FROZEN_KEYS_LOCK = threading.Lock()
+
+
+def _freeze_exhausted_keys(eng):
+    """Wrap request_openai_completion so a key that answers HTTP 402 is frozen
+    immediately: the engine's own rotation would keep handing it out again and
+    burn every retry attempt on an empty account. Dead keys (401/403/404) are
+    skipped within one call, like the engine does."""
+    if getattr(eng, "_streamcast_freeze_patch", False):
+        return
+    original = eng.request_openai_completion
+
+    def wrapped(provider, prompt, system_prompt, config):
+        pid = provider["id"]
+        with _FROZEN_KEYS_LOCK:
+            frozen = set(_FROZEN_KEYS.get(pid, ()))
+        all_keys = [k for k in (provider.get("api_keys") or []) if k]
+        live = [k for k in all_keys if k not in frozen]
+        if not live:
+            raise RuntimeError(f"all {len(all_keys)} key(s) of this provider "
+                               f"are out of balance (HTTP 402)")
+        last_error = None
+        for key in live:
+            try:
+                return original({**provider, "api_keys": [key]},
+                                prompt, system_prompt, config)
+            except RuntimeError as error:
+                message = str(error)
+                if "402" in message or "insufficient" in message.lower():
+                    with _FROZEN_KEYS_LOCK:
+                        _FROZEN_KEYS.setdefault(pid, set()).add(key)
+                    set_provider_alert(pid, "nobalance",
+                                       f"key {_mask_key(key)} ran out of balance — frozen")
+                    last_error = error
+                    continue
+                if re.match(r"^HTTP (401|403|404)\b", message):
+                    last_error = error
+                    continue
+                raise
+        raise last_error
+
+    eng.request_openai_completion = wrapped
+    eng._streamcast_freeze_patch = True
 
 
 def data_dir():
@@ -50,6 +99,7 @@ def _load():
         return None
     os.makedirs(data_dir(), exist_ok=True)
     eng.DATA_DIR = data_dir()  # engine resolves data files at call time
+    _freeze_exhausted_keys(eng)
     engine = eng
     return engine
 
@@ -261,7 +311,9 @@ def check_provider_keys(provider_id):
 
     A GET /models probe alone passes for keys with no money left, so for
     OpenAI-compatible providers a 1-token completion is sent as well — it
-    costs a fraction of a cent and catches HTTP 402."""
+    costs a fraction of a cent and catches HTTP 402. Budget gateways answer
+    in 20-30 s per request, so the timeouts are generous; the whole check can
+    take a minute or two."""
     import requests
     from concurrent.futures import ThreadPoolExecutor
     eng = _load()
@@ -279,14 +331,14 @@ def check_provider_keys(provider_id):
             if provider.get("kind") == "gemini":
                 response = requests.get(
                     "https://generativelanguage.googleapis.com/v1beta/models",
-                    params={"key": key}, timeout=15)
+                    params={"key": key}, timeout=40)
                 if response.status_code == 200:
                     return "ok", ""
                 if response.status_code == 429:
                     return "frozen", "HTTP 429"
                 return "dead", f"HTTP {response.status_code}"
             response = requests.get(f"{base}/models",
-                                    headers={"Authorization": f"Bearer {key}"}, timeout=15)
+                                    headers={"Authorization": f"Bearer {key}"}, timeout=40)
             if response.status_code != 200:
                 if response.status_code == 429:
                     return "frozen", "HTTP 429"
@@ -303,7 +355,7 @@ def check_provider_keys(provider_id):
                     json={"model": provider.get("model") or "gpt-4o-mini",
                           "max_tokens": 1,
                           "messages": [{"role": "user", "content": "hi"}]},
-                    timeout=45)
+                    timeout=75)
             except requests.Timeout:
                 return "ok", "key accepted; completion probe timed out (provider slow) — balance not verified"
             if completion.status_code == 200:
