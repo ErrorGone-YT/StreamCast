@@ -865,7 +865,8 @@ def _translation_worker(stream_id, video_id, title, description, languages, part
                 elif kind == "fail":
                     line = f"✗ {lang} — {name}: failed — {str(detail)[:120]}"
                 elif kind == "retry":
-                    line = f"⟳ {lang} — {name}: {str(detail)[:100]} — retrying…"
+                    marker = "⚠" if ("402" in str(detail) or "insufficient" in str(detail).lower()) else "⟳"
+                    line = f"{marker} {lang} — {name}: {str(detail)[:100]} — retrying…"
                 else:
                     line = str(detail)[:160]
                 job["log"].append({"kind": kind, "lang": lang, "detail": line})
@@ -1088,7 +1089,7 @@ def oauth2callback():
         profiles["profiles"] = [p for p in profiles["profiles"]
                                 if p is profile or p.get("channel_id") != profile.get("channel_id")]
         eng.save_channel_profiles(profiles)
-        translator_bridge._yt_client = None  # force a client rebuild for the new token
+        translator_bridge._yt_clients.clear()  # force client rebuilds for new tokens
         flash(f"YouTube channel connected: {profile.get('channel_title', '')}", "ok")
     except Exception as e:
         logging.getLogger("streamcast").warning("OAuth connect failed: %s", e)

@@ -238,8 +238,11 @@ def save_provider_registry(reg):
 
 
 def check_provider_keys(provider_id):
-    """Validate each API key of a provider (ok / frozen / dead). Ported from
-    the translator's web UI so key status is visible in StreamCast too."""
+    """Validate each API key of a provider (ok / frozen / dead / no balance).
+
+    A GET /models probe alone passes for keys with no money left, so for
+    OpenAI-compatible providers a 1-token completion is sent as well — it
+    costs a fraction of a cent and catches HTTP 402."""
     import requests
     from concurrent.futures import ThreadPoolExecutor
     eng = _load()
@@ -258,14 +261,34 @@ def check_provider_keys(provider_id):
                 response = requests.get(
                     "https://generativelanguage.googleapis.com/v1beta/models",
                     params={"key": key}, timeout=10)
-            else:
-                response = requests.get(f"{base}/models",
-                                        headers={"Authorization": f"Bearer {key}"}, timeout=10)
-            if response.status_code == 200:
+                if response.status_code == 200:
+                    return "ok", ""
+                if response.status_code == 429:
+                    return "frozen", "HTTP 429"
+                return "dead", f"HTTP {response.status_code}"
+            response = requests.get(f"{base}/models",
+                                    headers={"Authorization": f"Bearer {key}"}, timeout=10)
+            if response.status_code != 200:
+                if response.status_code == 429:
+                    return "frozen", "HTTP 429"
+                return "dead", f"HTTP {response.status_code}"
+            # The key exists — now check it can actually run a completion
+            # (catches accounts with no balance: HTTP 402).
+            completion = requests.post(
+                f"{base}/chat/completions",
+                headers={"Authorization": f"Bearer {key}",
+                         "Content-Type": "application/json"},
+                json={"model": provider.get("model") or "gpt-4o-mini",
+                      "max_tokens": 1,
+                      "messages": [{"role": "user", "content": "hi"}]},
+                timeout=20)
+            if completion.status_code == 200:
                 return "ok", ""
-            if response.status_code == 429:
+            if completion.status_code == 402:
+                return "nobalance", "HTTP 402 — insufficient balance"
+            if completion.status_code == 429:
                 return "frozen", "HTTP 429"
-            return "dead", f"HTTP {response.status_code}"
+            return "dead", f"HTTP {completion.status_code}"
         except Exception as error:
             return "dead", str(error)[:80]
 
@@ -275,24 +298,44 @@ def check_provider_keys(provider_id):
             for k, (s, d) in zip(keys, verdicts)]
 
 
-_yt_client = None  # cached authorized client (credentials refresh themselves)
+_yt_clients = {}  # channel_id -> authorized client (credentials refresh themselves)
 
 
-def get_youtube_client():
-    """Authorized YouTube client for the active channel (the last connected
-    one), or None."""
-    global _yt_client
-    if _yt_client is not None:
-        return _yt_client
+def _authenticate_profile(profile):
+    eng = _load()
+    if eng is None:
+        raise RuntimeError(load_error)
+    return eng.authenticate(profile)
+
+
+def _profile_for_channel(channel_id):
     eng = _load()
     if eng is None:
         return None
+    profiles = eng.load_channel_profiles().get("profiles", [])
+    if channel_id:
+        match = next((p for p in profiles if p.get("channel_id") == channel_id), None)
+        if match:
+            return match
+    return profiles[-1] if profiles else None  # fall back to the active one
+
+
+def get_youtube_client(channel_id=None):
+    """Authorized client for the channel owning the video when channel_id is
+    given, otherwise for the active (last connected) channel. None when the
+    channel isn't authorized."""
+    cache_key = channel_id or "__active__"
+    if cache_key in _yt_clients:
+        return _yt_clients[cache_key]
+    if _load() is None:
+        return None
+    profile = _profile_for_channel(channel_id)
+    if profile is None:
+        return None
     try:
-        profiles = eng.load_channel_profiles().get("profiles", [])
-        if not profiles:
-            return None
-        _yt_client = eng.authenticate(profiles[-1])
-        return _yt_client
+        client = _authenticate_profile(profile)
+        _yt_clients[cache_key] = client
+        return client
     except Exception:
         return None
 
@@ -312,7 +355,6 @@ def fetch_video_meta(video_id):
 def video_lookup(video_id):
     """Lightweight snippet lookup (title / channel / description) for the
     stream-name autofill. Works for live broadcasts and regular videos."""
-    eng = _load()
     youtube = get_youtube_client()
     if youtube is None:
         raise RuntimeError("YouTube channel is not connected")
@@ -322,14 +364,35 @@ def video_lookup(video_id):
     snippet = response["items"][0]["snippet"]
     return {"title": snippet.get("title", ""),
             "channel_title": snippet.get("channelTitle", ""),
+            "channel_id": snippet.get("channelId", ""),
             "description": snippet.get("description", "")}
+
+
+def fetch_video_meta(video_id):
+    """Current title/description of a video (for the 'from video' source).
+    Resolves the video's owning channel automatically."""
+    meta = video_lookup(video_id)
+    return {"title": meta["title"], "description": meta["description"]}
 
 
 def update_video_localizations(video_id, source_title, source_description,
                                source_language, localizations):
-    """Write localized title/description back to the YouTube video."""
+    """Write localized title/description back to the YouTube video. The client
+    is picked by the video's owning channel, so translations land on the right
+    channel even when several are connected."""
     eng = _load()
-    youtube = get_youtube_client()
+    if eng is None:
+        raise RuntimeError(load_error)
+    channel_id = ""
+    try:
+        # One extra 1-unit videos.list to learn the owner; if it fails we let
+        # the fallback channel try and surface the real API error instead.
+        response = get_youtube_client().videos().list(part="snippet", id=video_id).execute()
+        if response.get("items"):
+            channel_id = response["items"][0]["snippet"].get("channelId", "")
+    except Exception:
+        pass
+    youtube = get_youtube_client(channel_id or None)
     if youtube is None:
         raise RuntimeError("YouTube channel is not connected")
     merged = dict(localizations)
