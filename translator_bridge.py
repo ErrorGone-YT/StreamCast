@@ -314,7 +314,11 @@ def check_provider_keys(provider_id):
                 return "frozen", "HTTP 429"
             return "dead", f"HTTP {completion.status_code}"
         except requests.Timeout:
-            return "dead", "timeout on /models — provider unreachable"
+            # Unreachable provider says nothing about the keys themselves.
+            return "unknown", "provider unreachable (timeout) — status unknown"
+        except requests.RequestException as error:
+            # DNS failure / connection refused / reset — network, not the key.
+            return "unknown", f"provider unreachable — {str(error)[:70]}"
         except Exception as error:
             return "dead", str(error)[:80]
 
